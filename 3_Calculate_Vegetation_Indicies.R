@@ -1,21 +1,6 @@
 source("Functions/lecospectR.R")
 #source("./Scripts/Utilities/install_dependencies.R")
 
-###Load in ALL lecospec packages??###
-packages <- c(
-  "rgeos", "sf", "sp", "mapview", "maptools",
-  "doParallel", "randomForest", "ranger", "missForest", "caret",
-  "e1071", "raster", "spectrolab", "tidyverse", "useful", "SpaDES",
-  "SpaDES.tools", "Polychrome", "gplots", "rasterVis", "RColorBrewer",
-  "naniar", "doSNOW", "snow", "rjson", "arrow", "RhpcBLASctl", "plotly",
-  "readr", "terra", "pivottabler", "webshot", "xgboost", "permute",
-  "pls", "landscapemetrics", "landscapetools", "stars", "maptiles"
-)
-packages <- unique(packages)
-for(pkg in packages) {
-  library(pkg, character.only = TRUE)
-}
-
 library(spectrolab)
 library(terra)
 library(raster)
@@ -82,6 +67,16 @@ write.csv(plots_image_spectra_VIs,"./R_outputs/speclib_dendrometers/veg_indices/
 write.csv(median_VIs_final,"./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm_bytreeid.csv")
 
 ###CALCULATE STATS FOR VIs###
+##Peter said to use this chunk of code below for speclib stats
+#Summarize all spectra to the plot/date level
+speclib_rf_mean<- speclib_rf %>%
+  #Remove rows with missing spectra
+  dplyr::filter(is.na(Vogelmann4)==F) %>% 
+  mutate(UID = paste(Site,TreeID, sep="_")) %>%
+  group_by(Site, TreeID, UID) %>%
+  #group_by(Site, TreeID, GenusSpecies) %>%
+  summarise(across(X398:Vogelmann4, ~ median(.x, na.rm = TRUE))) 
+
 VI_names=colnames(plots_image_spectra_VIs[,-(1:10)])
 plot_info_names<-colnames(plots_image_spectra_VIs[,1:10])
 
