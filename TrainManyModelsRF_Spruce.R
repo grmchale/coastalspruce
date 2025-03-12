@@ -5,8 +5,8 @@ require(yardstick)
 #Read in data
 speclib_rf<-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid_5nm.csv")
 canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_5nm_bytreeid.csv")
-drone_dendro<-read.csv("C:/Users/gregory.mchale/OneDrive - University of Maine System/Coastal Spruce/Chapter 2 - ECOSTRESS/Dendrometers/drone_dendro.csv")
-cumulative_zg<-read.csv("C:/Users/gregory.mchale/OneDrive - University of Maine System/Coastal Spruce/Chapter 2 - ECOSTRESS/Dendrometers/cumulative_zg.csv")
+drone_dendro<-read.csv("G:/Dendrometers/drone_dendro.csv")
+cumulative_zg<-read.csv("G:/Dendrometers/cumulative_zg.csv")
 
 #Make a list of  band names for data filtering later
 band_names<-colnames(speclib_rf[,30:ncol(speclib_rf)])
