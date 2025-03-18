@@ -88,38 +88,6 @@ UID_list<-unique(UID)
 #plots_image_spectra_VIs$UID<-UID
 #unique(plots_image_spectra_VIs$UID)
 
-plots_image_spectra_VIs_stats<-
-  lapply(1:length(UID_list), function(x){
-    df<-plots_image_spectra_VIs %>% dplyr::filter(UID==UID_list[x])
-    df<-df %>% dplyr::select(VI_names) #Alter to only look at vegetation indicies
-    df_VIs_quantiles<-lapply(df, quantile, na.rm=TRUE) #quantile(probs=seq(0.25, 1, 0.25))), applies the quantile function to each column in the filtered data frame df
-    df_VIs_mean<-lapply(df, mean, na.rm=TRUE)
-    df_VIs_mean<-as.data.frame(t(as.data.frame(df_VIs_mean)))
-    colnames(df_VIs_mean)<-"Mean" #Calculates mean for each vegetation index
-    df_VIs_sd<-lapply(df, sd, na.rm=TRUE)
-    df_VIs_sd<-as.data.frame(t(as.data.frame(df_VIs_sd)))
-    colnames(df_VIs_sd)<-"SD" #Calculates SD for each vegetation index
-    df_VIs_median<-lapply(df, median, na.rm=TRUE)
-    df_VIs_median<-as.data.frame(t(as.data.frame(df_VIs_median)))
-    colnames(df_VIs_median)<-"Median" #Calculates Median for each vegetation index
-    #Add vegetation index names 
-    df_VIs_stats<-cbind(df_VIs_quantiles,df_VIs_mean, df_VIs_sd, df_VIs_median)
-    df_VIs_stats$VegIndices<-rownames(df_VIs_quantiles)
-    #Add UID/TreeID name back in (lost in the metadata step)
-    df_VIs_stats$UID<-UID_list[x]
-    print(UID_list[x])
-    return(df_VIs_stats)
-    rm(df)})
-
-#Combine all statistics into a single dataframe
-plots_image_spectra_VIs_stats_df<-as.data.frame(Reduce(rbind, plots_image_spectra_VIs_stats)) 
-
-plot_info<-Reduce(rbind, str_split(plots_image_spectra_VIs_stats_df$UID,"_"))
-colnames(plot_info)<-c("Site","Species","X", "Y", "CC")
-plots_image_spectra_VIs_stats_df_final<-cbind(plot_info, plots_image_spectra_VIs_stats_df)
-str(plots_image_spectra_VIs_stats_df_final)
-write.csv(plots_image_spectra_VIs_stats_df_final, "./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1nm_stats.csv")
-
 ###CREATE SEPERATE .CSVs PARSING OUT SEPERATE PORTIONS OF THE STATS###
 library(dplyr)
 library(tidyr)

@@ -4,13 +4,17 @@ library(ranger)
 library(caret)
 library(yardstick)   # model metrics (R2, RMSE)
 
-#Read in data
-speclib_rf<-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid_5nm.csv") #Note 1nm, 5nm, 10nm here
-canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_5nm_bytreeid.csv") #Note 1nm, 5nm, 10nm here
+## Read in data
+#Spectral data
+speclib_rf<-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid_1nm.csv") #Note 1nm, 5nm, 10nm here
+canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1nm_bytreeid.csv") #Note 1nm, 5nm, 10nm here
+VIstats_merged <-read.csv("./R_outputs/speclib_dendrometers/veg_indices_stats/dendrometer_VIstats_MERGED.csv") #All VI stats for each nm resample
+VIstats_speclib <-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid-speclibs_MERGED.csv") #All VI stats, all speclibs for each resample
+#Dendrometer data
 drone_dendro<-read.csv("G:/Dendrometers/drone_dendro.csv")
 cumulative_zg<-read.csv("G:/Dendrometers/cumulative_zg.csv")
 
-##Decide which RF dataframe to use, set dataframe name to match workflow beneath, your onramp!
+## Decide which RF dataframe to use, set dataframe name to match workflow beneath, your onramp!
 #Joined TWD & canopy VIs
 df_rf <- canopy_VIs %>%
   inner_join(drone_dendro %>% select(Dndrmtr, TWD), by = "Dndrmtr") %>%
@@ -21,18 +25,29 @@ df_rf <- speclib_rf %>%
   inner_join(drone_dendro %>% select(Dndrmtr, TWD), by = "Dndrmtr") %>%  
   drop_na(TWD) %>%
   select(-matches("X.x|CC.x|Species.x|X.1|sample_name|Site|Species.y|X.y|Y|CC.y|Dndrmtr|DBH|Tag"))
-
+#Joined TWD, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples
+df_rf <- VIstats_merged %>%
+  inner_join(drone_dendro %>% select(TreeID, TWD), by = "TreeID") %>%
+  drop_na(TWD)
+#Joined TWD, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples + spectral library (at 1,5,10,15nm)
+df_rf <- VIstats_speclib %>%
+  inner_join(drone_dendro %>% select(TreeID, TWD), by = "TreeID") %>%
+  drop_na(TWD) %>%
+  select(-X) %>%  # Remove the column named "X" if it exists
+  rename_with(~ gsub("^X", "", .), starts_with("X"))  # Remove "X" prefix from column names
 # ------------------------------------------------------------------------------------------------
 
 #Define dependent and independent variables & model name
 # Identify predictor columns
 predictor_vars <- names(canopy_VIs)[12:108] #For just vegetation indicies & TWD
 predictor_vars <- names(df_rf)[2:207] #For vegetation indicies, spectral library, and TWD, adjust as needed
+predictor_vars <- names(df_rf)[2:1941] #For VI stats, 1,5,10,15 nm
+predictor_vars <- names(df_rf)[2:2766] #For VI stats, 1,5,10,15 nm, spectral libraries (1,5,10,15nm)
 print(predictor_vars)
 # Define response variable
 response_var <- "TWD"
 #RF model name (for naming later)
-RF_NAME <- "5nmVIs-Speclib"
+RF_NAME <- "VIstats_speclib-1-5-10-15nm"
 
 # ------------------------------------------------------------------------------------------------
 
@@ -79,7 +94,7 @@ importance_vals %>%
   coord_flip() +
   labs(x = "Variable", y = "Importance", title = paste("Top 15 Variables Predicting TWD -", RF_NAME))
 
-## --------------------------------------------------
+## -------------------------------------------------------------
 
 ## Save cross-validated model, importance, and importance graph
 # Define file paths clearly
