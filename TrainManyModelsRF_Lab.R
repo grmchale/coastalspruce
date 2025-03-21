@@ -2,39 +2,67 @@
 library(tidyverse)
 library(ranger)
 library(caret)
+library(dplyr)
 library(yardstick)   # model metrics (R2, RMSE)
 
-## Read in data
+## Read in data ---------------------------------------------------------------------------------------------
 #Spectral data
 speclib_rf<-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid_1nm.csv") #Note 1nm, 5nm, 10nm here
 canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1nm_bytreeid.csv") #Note 1nm, 5nm, 10nm here
+canopy_VI_stats<-read.csv("./R_outputs/speclib_dendrometers/veg_indices_stats/dendrometer_VIstats_5nm.csv") #Note wavelength
 VIstats_merged <-read.csv("./R_outputs/speclib_dendrometers/veg_indices_stats/dendrometer_VIstats_MERGED.csv") #All VI stats for each nm resample
 VIstats_speclib <-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid-speclibs_MERGED.csv") #All VI stats, all speclibs for each resample
-#Dendrometer data
+#LiDAR data
+LiDAR_metrics <- read.csv("G:/LiDAR/Metrics/Dendro_Crown_Metrics.csv")
+#Geospatial data
+easo <- read.csv("G:/LiDAR/Geospatial_Variables/elv_slope_asp_ocean_dendrometers.csv") #elevation, slope, aspect, distance to coast
+latitude_df <- read.csv("G:/LiDAR/Latitude/Dendrometer_Crowns_Latitude.csv")
+#In-situ data
+DBH <- read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1nm_bytreeid.csv") %>%
+  select(TreeID, DBH)
+# ...age <- read.csv TO BE CONTINUED...
+#Dendrometer + HOBO data
 drone_dendro<-read.csv("G:/Dendrometers/drone_dendro.csv")
 cumulative_zg<-read.csv("G:/Dendrometers/cumulative_zg.csv")
 
-## Decide which RF dataframe to use, set dataframe name to match workflow beneath, your onramp!
-#Joined TWD & canopy VIs
+# ------------------------------------------------------------------------------------------------
+
+## Decide which RF dataframe to use, set dataframe
+# Define dependent/response df and variable
+dvarb <- "TWD"
+df_dep <- "drone_dendro"
+
+#Joined dvarb & canopy VIs
 df_rf <- canopy_VIs %>%
-  inner_join(drone_dendro %>% select(Dndrmtr, TWD), by = "Dndrmtr") %>%
-  drop_na(TWD)  # remove rows with no TWD value
-#Joined TWD, spectral library & canopy VIs
+  inner_join(get(df_dep) %>% select(Dndrmtr, !!dvarb), by = "Dndrmtr") %>%
+  drop_na(!!sym(dvarb))  # remove rows with no dvarb value
+#Joined dvarb, spectral library & canopy VIs
 df_rf <- speclib_rf %>% 
   inner_join(canopy_VIs, by = "TreeID", keep = FALSE) %>%  
-  inner_join(drone_dendro %>% select(Dndrmtr, TWD), by = "Dndrmtr") %>%  
-  drop_na(TWD) %>%
+  inner_join(get(df_dep) %>% select(Dndrmtr, !!dvarb), by = "Dndrmtr") %>%  
+  drop_na(!!sym(dvarb)) %>%
   select(-matches("X.x|CC.x|Species.x|X.1|sample_name|Site|Species.y|X.y|Y|CC.y|Dndrmtr|DBH|Tag"))
-#Joined TWD, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples
-df_rf <- VIstats_merged %>%
-  inner_join(drone_dendro %>% select(TreeID, TWD), by = "TreeID") %>%
-  drop_na(TWD)
-#Joined TWD, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples + spectral library (at 1,5,10,15nm)
+#Joined dvarb, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples
+df_rf <- canopy_VI_stats %>%
+  inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
+  drop_na(!!sym(dvarb))
+#Joined dvarb, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples + spectral library (at 1,5,10,15nm)
 df_rf <- VIstats_speclib %>%
-  inner_join(drone_dendro %>% select(TreeID, TWD), by = "TreeID") %>%
-  drop_na(TWD) %>%
+  inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
+  drop_na(!!sym(dvarb)) %>%
   select(-X) %>%  # Remove the column named "X" if it exists
   rename_with(~ gsub("^X", "", .), starts_with("X"))  # Remove "X" prefix from column names
+#Joined dvarb and LiDAR metrics
+df_rf <- LiDAR_metrics %>% 
+  inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
+  drop_na(!!sym(dvarb))
+#Joined dvarb, LiDAR & 5 nm VI stats
+df_rf <- LiDAR_metrics %>%
+  inner_join(canopy_VI_stats, by = "TreeID", keep = FALSE) %>%  
+  inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%  
+  drop_na(!!sym(dvarb)) %>%
+  select(-TreeID)
+  
 # ------------------------------------------------------------------------------------------------
 
 #Define dependent and independent variables & model name
@@ -43,11 +71,14 @@ predictor_vars <- names(canopy_VIs)[12:108] #For just vegetation indicies & TWD
 predictor_vars <- names(df_rf)[2:207] #For vegetation indicies, spectral library, and TWD, adjust as needed
 predictor_vars <- names(df_rf)[2:1941] #For VI stats, 1,5,10,15 nm
 predictor_vars <- names(df_rf)[2:2766] #For VI stats, 1,5,10,15 nm, spectral libraries (1,5,10,15nm)
+predictor_vars <- names(df_rf)[1:56] #For only LiDAR variables
+predictor_vars <- names(df_rf)[!(names(df_rf) %in% dvarb)] #Dynamic read in????
+
 print(predictor_vars)
 # Define response variable
-response_var <- "TWD"
+response_var <- dvarb
 #RF model name (for naming later)
-RF_NAME <- "VIstats_speclib-1-5-10-15nm"
+RF_NAME <- "LiDAR_metrics-5nm_VIstats"
 
 # ------------------------------------------------------------------------------------------------
 
@@ -78,7 +109,9 @@ rf_tuned$results %>%
          min.node.size == rf_tuned$bestTune$min.node.size,
          splitrule == rf_tuned$bestTune$splitrule)
 
-## Feature Importance from cross-validated model
+# ---------------------------------------------------------------------------------------------------
+
+# Feature Importance from cross-validated model
 importance_vals <- data.frame(
   Vegetation_Index = names(rf_tuned$finalModel$variable.importance),
   Importance = rf_tuned$finalModel$variable.importance

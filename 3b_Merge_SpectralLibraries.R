@@ -36,7 +36,7 @@ ggplot(df_rf, aes(x = DPI_5nm_Q25, y = TWD)) +
   labs(x = "DPI_5nm_Q25", y = "TWD", title = "Scatterplot of DPI_5nm_Q25 vs TWD") +
   theme_minimal()  # Clean theme
 
-#Structural and spectral characteristics???? HUHHHHHH???
+#Structural and spectral characteristics???? HUHHHHHH???----------------------------------------------------
 library(dplyr)
 library(readr)
 install.packages("Hmisc")
@@ -83,6 +83,41 @@ p_values_structural_spectral <- cor_results$P[rownames(cor_results$P)[1:ncol(str
 # Check outputs:
 print(cor_matrix_structural_spectral)
 print(p_values_structural_spectral)
+
+#Just a quick scatterplot for spectral vs structural-----------------------------------------------------
+library(ggplot2)
+
+# Compute R² values manually
+lm_dpi <- lm(DPI ~ isd, data = combined_data)
+r2_dpi <- summary(lm_dpi)$r.squared
+
+lm_ci <- lm(CI ~ isd, data = combined_data)
+r2_ci <- summary(lm_ci)$r.squared
+
+# Scatterplot for ISD vs DPI
+plot1 <- ggplot(combined_data, aes(x = isd, y = DPI)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +  # Linear trendline
+  annotate("text", x = min(combined_data$isd), y = max(combined_data$DPI), 
+           label = paste("R² =", round(r2_dpi, 3)), hjust = 0, size = 5) +
+  labs(x = "ISD", y = "DPI", title = "ISD vs DPI") +
+  theme_minimal()
+
+# Scatterplot for ISD vs CI
+plot2 <- ggplot(combined_data, aes(x = isd, y = CI)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +  # Linear trendline
+  annotate("text", x = min(combined_data$isd), y = max(combined_data$CI), 
+           label = paste("R² =", round(r2_ci, 3)), hjust = 0, size = 5) +
+  labs(x = "ISD", y = "CI", title = "ISD vs CI") +
+  theme_minimal()
+
+# Display the plots side by side
+library(gridExtra)
+grid.arrange(plot1, plot2, ncol = 2)
+
+
+#---------------------------------------------------------------------------------------------
 
 library(plotly)
 library(reshape2)

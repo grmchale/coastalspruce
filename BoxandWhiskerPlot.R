@@ -1,60 +1,70 @@
 #Code for creating box and whisker plots with spectral indicies across sites
 
-#Read in df or .csv
-MASTER_TreeID_speclib
-
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(dplyr)
 
-#Adding ARI1 and ARI2 to the df
-MASTER_TreeID_speclib_clean <- MASTER_TreeID_speclib_clean %>%
-  mutate(
-    ARI1_raw = (1 / X550) - (1 / X700),
-    ARI2_raw = X800 * ((1 / X550) - (1 / X700))
-  )
+# Read in VI indices by pixels
+VIs <- read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_5nm.csv")
+# Read in spectral library
+speclib <- read.csv(paste0("./R_outputs/speclib_dendrometers/dendrometer_canopy_speclib_5nm.csv"))
 
-# Compute the min and max for ARI1_raw and ARI2_raw
-ARI1_min <- min(MASTER_TreeID_speclib_clean$ARI1_raw, na.rm = TRUE)
-ARI1_max <- max(MASTER_TreeID_speclib_clean$ARI1_raw, na.rm = TRUE)
-
-ARI2_min <- min(MASTER_TreeID_speclib_clean$ARI2_raw, na.rm = TRUE)
-ARI2_max <- max(MASTER_TreeID_speclib_clean$ARI2_raw, na.rm = TRUE)
-
-# Apply min-max scaling to get ARI1 and ARI2 into [0,1] range
-MASTER_TreeID_speclib_clean <- MASTER_TreeID_speclib_clean %>%
-  mutate(
-    ARI1 = (ARI1_raw - ARI1_min) / (ARI1_max - ARI1_min),
-    ARI2 = (ARI2_raw - ARI2_min) / (ARI2_max - ARI2_min)
-  )
-
+# ------------------------------------------------------------------------------
+# ADD IN ARI1 AND ARI2!
 
 # Clean the data to remove outliers
-MASTER_TreeID_speclib_clean <- MASTER_TreeID_speclib %>%
-  filter(CRI1 > -1e10)  # Adjust threshold as needed
+#VIs_clean <- VIs %>%
+ # filter(CRI1 > -1e10)  # Adjust threshold as needed
 
-# Create the boxplot - STRESS INDICES
+speclib <- speclib %>%
+  mutate(
+    ARI1 = (1 / `X548`) - (1 / `X698`),
+    ARI2 = `X798` * ((1 / `X548`) - (1 / `X698`)) #Use 'X803 for 15nm
+  )
+# Directly pass calculated columns into VIs_df after column 11
+VIs_clean <- VIs %>%
+  mutate(ARI1 = speclib$ARI1, ARI2 = speclib$ARI2) %>%  
+  relocate(ARI1, ARI2, .after = 11)
 
-# Extract site code and pivot indices to long format
-long_data <- MASTER_TreeID_speclib_clean %>%
+# ------------------------------------------------------------------------------
+# BOX PLOT BY PIXEL!!
+# Extract site code from TreeID and pivot indices to long format
+long_data <- VIs_clean %>%
   mutate(Site = substr(TreeID, 1, 2)) %>% 
-  # Pivot CRI1, CRI2, PSRI into long format
-  pivot_longer(cols = c(CRI1, CRI2, PSRI, ARI1, ARI2), 
+  pivot_longer(cols = c(CRI1, CRI2, PSRI, ARI1, ARI2, NDVI), 
                names_to = "Index", 
                values_to = "Value")
 
-# Now 'long_data' has columns: TreeID, Site, Index (CRI1/CRI2/PSRI), and Value
-
-# This createS 3 separate panels, one for each index, and inside each panel
-# you'll see boxplots for CE, ET, and RI.
-
+# Create the boxplot for each index across sites
 ggplot(long_data, aes(x = Site, y = Value, fill = Site)) +
   geom_boxplot() +
   facet_wrap(~Index, scales = "free_y") + 
-  # 'scales = "free_y"' is optional. If you think all indices have similar scales,
-  # you can leave it as scales = "fixed".
-  labs(title = "Comparison of Stress Indicies (CRI1, CRI2, PSRI, ARI1, ARI2) Across Sites",
+  labs(title = "Dendrometer Tree Canopies Stress Indices (5 nm Resample) - All Pixels",
+       x = "Site",
+       y = "Index Value") +
+  theme_minimal()
+
+# ------------------------------------------------------------------------------
+# BOX PLOT BY TREEID!!
+# Aggregate the pixel-level data by TreeID using the median value for each index
+agg_data <- VIs_clean %>%
+  group_by(TreeID) %>%
+  summarise(across(c(CRI1, CRI2, PSRI, ARI1, ARI2, NDVI), median, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Site = substr(TreeID, 1, 2))  # Extract site code from TreeID
+
+# Pivot the aggregated data to long format for plotting
+long_agg_data <- agg_data %>%
+  pivot_longer(cols = c(CRI1, CRI2, PSRI, ARI1, ARI2, NDVI),
+               names_to = "Index",
+               values_to = "Value")
+
+# Create the boxplot for each index across sites using the aggregated data
+ggplot(long_agg_data, aes(x = Site, y = Value, fill = Site)) +
+  geom_boxplot() +
+  facet_wrap(~Index, scales = "free_y") +
+  labs(title = "Dendrometer Tree Canopies Stress Indices (5 nm Resample) - Tree Median Value",
        x = "Site",
        y = "Index Value") +
   theme_minimal()
