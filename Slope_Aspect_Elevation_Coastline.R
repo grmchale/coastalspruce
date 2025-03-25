@@ -162,5 +162,14 @@ head(geospatial_df)
 # Save it!
 write.csv(geospatial_df, "G:/LiDAR/Geospatial_Variables/elv_slope_asp_ocean_dendrometers.csv" )
 
+#------------------ JOIN EASO DF TO DENDROMETER NUMBER -------------------------
+
+library(dplyr)
+
+# Join the data frames by TreeID, keeping only the Dndrmtr column from canopy_VIs
+result <- easo %>%
+  left_join(canopy_VIs %>% select(TreeID, Dndrmtr), by = "TreeID")
+
+write.csv(result, "G:/LiDAR/Geospatial_Variables/elv_slope_asp_ocean_dendrometers_wDndrmtrfield.csv" )
 
 

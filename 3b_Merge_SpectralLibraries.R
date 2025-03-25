@@ -1,6 +1,7 @@
 library(purrr)
 library(dplyr)
 
+# ------------- MERGE SPECTRAL LIBRARIES ------------------------------------
 NM_values <- c("1nm", "5nm", "10nm", "15nm")
 
 # Read, clean, and rename columns before merging
@@ -36,7 +37,7 @@ ggplot(df_rf, aes(x = DPI_5nm_Q25, y = TWD)) +
   labs(x = "DPI_5nm_Q25", y = "TWD", title = "Scatterplot of DPI_5nm_Q25 vs TWD") +
   theme_minimal()  # Clean theme
 
-#Structural and spectral characteristics???? HUHHHHHH???----------------------------------------------------
+# ----------Structural and spectral characteristics???? HUHHHHHH???-------------
 library(dplyr)
 library(readr)
 install.packages("Hmisc")
@@ -84,7 +85,7 @@ p_values_structural_spectral <- cor_results$P[rownames(cor_results$P)[1:ncol(str
 print(cor_matrix_structural_spectral)
 print(p_values_structural_spectral)
 
-#Just a quick scatterplot for spectral vs structural-----------------------------------------------------
+# --------------------Just a quick scatterplot for spectral vs structural------
 library(ggplot2)
 
 # Compute R² values manually
@@ -117,7 +118,7 @@ library(gridExtra)
 grid.arrange(plot1, plot2, ncol = 2)
 
 
-#---------------------------------------------------------------------------------------------
+#-------------- CORRELATION MATRIX!!--------------------------------------------
 
 library(plotly)
 library(reshape2)
@@ -174,3 +175,52 @@ plot(graph,
      edge.width = E(graph)$Correlation * 3, # Adjusted visually based on strength
      main = "Structural vs Spectral Correlation Network (>0.5)",
      vertex.label.color = "black")
+
+# ---------------------- MAP MOISTURE INDEX AGAINST TWD ------------------------
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+drone_dendro<-read.csv("G:/Dendrometers/drone_dendro.csv")
+VIstats_merged <-read.csv("./R_outputs/speclib_dendrometers/veg_indices_stats/dendrometer_VIstats_MERGED.csv")
+
+# Left join the data frames by TreeID
+merged_df <- drone_dendro %>%
+  left_join(VIstats_merged, by = "TreeID")
+
+# Function to pivot and create scatterplots for specified WBI columns
+plot_wbi_scatter <- function(data, xvar, yvars, measure_label) {
+  data_long <- data %>%
+    pivot_longer(
+      cols = all_of(yvars),
+      names_to = "WBI_Spacing",
+      values_to = "WBI_Value"
+    )
+  
+  ggplot(data_long, aes_string(x = xvar, y = "WBI_Value")) +
+    geom_point() +
+    facet_wrap(~ WBI_Spacing, scales = "free_y") +
+    labs(
+      title = paste("TWD vs. WBI", measure_label, "at Different nm Spacings"),
+      x = "TWD",
+      y = paste("WBI", measure_label)
+    ) +
+    theme_minimal()
+}
+
+# 1) Create scatter plots for the WBI Median columns
+plot_wbi_scatter(
+  data          = merged_df,
+  xvar          = "TWD",
+  yvars         = c("WBI_1nm_Median", "WBI_5nm_Median", "WBI_10nm_Median", "WBI_15nm_Median"),
+  measure_label = "Median"
+)
+
+# 2) Create scatter plots for the WBI Mean columns
+plot_wbi_scatter(
+  data          = merged_df,
+  xvar          = "TWD",
+  yvars         = c("WBI_1nm_Mean", "WBI_5nm_Mean", "WBI_10nm_Mean", "WBI_15nm_Mean"),
+  measure_label = "Mean"
+)
+

@@ -25,7 +25,7 @@ model_data <- df_rf %>%
 # ---------------------------
 # 2. Hyperparameter Tuning using caret
 # ---------------------------
-# Set up repeated cross-validation (here: 10-fold repeated 5 times)
+# Set up repeated cross-validation (here: 5-fold repeated 5 times)
 set.seed(1234)  # For reproducibility
 train_control <- trainControl(method = "repeatedcv",
                               number = 5,
