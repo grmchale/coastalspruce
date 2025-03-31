@@ -1,3 +1,127 @@
+install.packages("boot")
+library(boot)
+library(randomForest)
+
+# Dependent variable (can be dynamically changed)
+dvarb <- "TWD"  
+# Predictor columns (dynamic)
+predictors <- colnames(df_rf)[1:490]
+# Number of bootstrap replicates
+n_boot <- 100  # adjust as needed
+
+# Storage for results
+results <- data.frame(
+  Iteration = 1:n_boot,
+  RMSE_train = numeric(n_boot),
+  RMSE_test = numeric(n_boot),
+  Rsq_train = numeric(n_boot),
+  Rsq_test = numeric(n_boot)
+)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Bootstrap iterations
+for(i in 1:n_boot){
+  
+  # Create 80/20 random split
+  sample_indices <- sample(nrow(df_rf), size = 0.8 * nrow(df_rf), replace = TRUE)
+  
+  train_data <- df_rf[sample_indices, c(dvarb, predictors)]
+  test_data  <- df_rf[-unique(sample_indices), c(dvarb, predictors)] # ensure test is different
+  
+  # Fit Random Forest model dynamically
+  formula_rf <- as.formula(paste(dvarb, "~", paste(predictors, collapse = "+")))
+  
+  rf_model <- randomForest(
+    formula_rf, 
+    data = train_data,
+    ntree = 200
+  )
+  
+  # Predictions
+  pred_train <- predict(rf_model, train_data)
+  pred_test <- predict(rf_model, test_data)
+  
+  # Calculate performance metrics
+  actual_train <- train_data[[dvarb]]
+  actual_test <- test_data[[dvarb]]
+  
+  # RMSE and R-squared
+  rmse_train <- sqrt(mean((actual_train - pred_train)^2))
+  rmse_test  <- sqrt(mean((actual_test - pred_test)^2))
+  
+  rsq_train <- cor(actual_train, pred_train)^2
+  rsq_test  <- cor(actual_test, pred_test)^2
+  
+  # Store results
+  results$RMSE_train[i] <- rmse_train
+  results$RMSE_test[i] <- rmse_test
+  results$Rsq_train[i] <- rsq_train
+  results$Rsq_test[i] <- rsq_test
+}
+
+# View summarized results
+head(results)
+
+# Summarize variability
+summary_results <- data.frame(
+  Metric = c("RMSE_train", "RMSE_test", "Rsq_train", "Rsq_test"),
+  Mean = c(mean(results$RMSE_train), mean(results$RMSE_test),
+           mean(results$Rsq_train), mean(results$Rsq_test)),
+  SD = c(sd(results$RMSE_train), sd(results$RMSE_test),
+         sd(results$Rsq_train), sd(results$Rsq_test)),
+  CI_lower = c(
+    quantile(results$RMSE_train, 0.025),
+    quantile(results$RMSE_test, 0.025),
+    quantile(results$Rsq_train, 0.025),
+    quantile(results$Rsq_test, 0.025)
+  ),
+  CI_upper = c(
+    quantile(results$RMSE_train, 0.975),
+    quantile(results$RMSE_test, 0.975),
+    quantile(results$Rsq_train, 0.975),
+    quantile(results$Rsq_test, 0.975)
+  )
+)
+
+# Print summary
+summary_results
+
+################################################################################
+
+# Function to bootstrap correlation for a given predictor
+boot_corr_fn <- function(data, indices, predictor){
+  sampled_data <- data[indices, ]
+  return(cor(sampled_data$TWD, sampled_data[[predictor]], use="complete.obs"))
+}
+
+# Prepare storage for results
+cor_results <- data.frame(
+  Predictor = predictor_names,
+  Correlation = NA,
+  CI_Lower = NA,
+  CI_Upper = NA
+)
+
+# Run bootstrapping for correlations (can take some minutes)
+set.seed(123)
+
+for(i in seq_along(predictor_names)){
+  predictor <- predictor_names[i]
+  boot_res <- boot(df_rf, boot_corr_fn, R=1000, predictor=predictor)
+  
+  cor_results$Correlation[i] <- mean(boot_res$t)
+  ci <- boot.ci(boot_res, type="perc")
+  cor_results$CI_Lower[i] <- ci$percent[4]  # 2.5% lower bound
+  cor_results$CI_Upper[i] <- ci$percent[5]  # 97.5% upper bound
+}
+
+# Display the first few correlation results
+head(cor_results)
+
+########################################################################################################
+# ---------------------------RANDOM FOREST WITH REPEATS-----------------------------------------------
 library(dplyr)
 library(caret)
 library(ranger)

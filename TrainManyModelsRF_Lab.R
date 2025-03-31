@@ -8,7 +8,7 @@ library(yardstick)   # model metrics (R2, RMSE)
 ## Read in data ---------------------------------------------------------------------------------------------
 #Spectral data
 speclib_rf<-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid_1nm.csv") #Note 1nm, 5nm, 10nm here
-canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1nm_bytreeid.csv") #Note 1nm, 5nm, 10nm here
+canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_5nm_bytreeid.csv") #Note 1nm, 5nm, 10nm here
 canopy_VI_stats<-read.csv("./R_outputs/speclib_dendrometers/veg_indices_stats/dendrometer_VIstats_5nm.csv") #Note wavelength
 VIstats_merged <-read.csv("./R_outputs/speclib_dendrometers/veg_indices_stats/dendrometer_VIstats_MERGED.csv") #All VI stats for each nm resample
 VIstats_speclib <-read.csv("./R_outputs/speclib_dendrometers/dendrometer_canopy_bytreeid-speclibs_MERGED.csv") #All VI stats, all speclibs for each resample
@@ -24,28 +24,29 @@ DBH <- read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1n
 #Dendrometer + HOBO data
 drone_dendro<-read.csv("G:/Dendrometers/drone_dendro.csv")
 cumulative_zg<-read.csv("G:/Dendrometers/cumulative_zg.csv")
+uptoflight_zg<-read.csv("G:/Dendrometers/cumulative_zg_uptoflight.csv")
 
 # ------------------------------------------------------------------------------------------------
 
 ## Decide which RF dataframe to use, set dataframe
 # Define dependent/response df and variable
-dvarb <- "TWD"
-df_dep <- "drone_dendro"
+dvarb <- "zg_fraction"
+df_dep <- "uptoflight_zg"
 
 #Joined dvarb & canopy VIs
 df_rf <- canopy_VIs %>%
-  inner_join(get(df_dep) %>% select(Dndrmtr, !!dvarb), by = "Dndrmtr") %>%
+  inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
   drop_na(!!sym(dvarb))  # remove rows with no dvarb value
 #Joined dvarb, spectral library & canopy VIs
 df_rf <- speclib_rf %>% 
-  inner_join(canopy_VIs, by = "TreeID", keep = FALSE) %>%  
-  inner_join(get(df_dep) %>% select(Dndrmtr, !!dvarb), by = "Dndrmtr") %>%  
+  #inner_join(canopy_VIs, by = "TreeID", keep = FALSE) %>%  
+  inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%  
   drop_na(!!sym(dvarb)) %>%
   select(-matches("X.x|CC.x|Species.x|X.1|sample_name|Site|Species.y|X.y|Y|CC.y|Dndrmtr|DBH|Tag"))
 #Joined dvarb, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples
 df_rf <- canopy_VI_stats %>%
   inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
-  drop_na(!!sym(dvarb))
+  drop_na(!!sym(dvarb)) %>%
 #Joined dvarb, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples + spectral library (at 1,5,10,15nm)
 df_rf <- VIstats_speclib %>%
   inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
@@ -62,7 +63,14 @@ df_rf <- LiDAR_metrics %>%
   inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%  
   drop_na(!!sym(dvarb)) %>%
   select(-TreeID)
-  
+#Joined dvarb, LiDAR, merged VI stats + speclib, easo,
+df_rf <- VIstats_speclib %>%
+  inner_join(LiDAR_metrics, by = "TreeID") %>%
+  inner_join(easo, by = "TreeID") %>%
+  inner_join(latitude_df, by = "TreeID") %>%
+  inner_join(DBH, by = "TreeID") %>%
+  inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
+  drop_na(!!sym(dvarb))
 # ------------------------------------------------------------------------------------------------
 
 #Define dependent and independent variables & model name

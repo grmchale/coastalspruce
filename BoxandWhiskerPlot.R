@@ -6,9 +6,10 @@ library(ggplot2)
 library(dplyr)
 
 # Read in VI indices by pixels
-VIs <- read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_5nm.csv")
+VIs <- read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1nm.csv")
+VIs_clean <- read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm_bytreeid.csv")
 # Read in spectral library
-speclib <- read.csv(paste0("./R_outputs/speclib_dendrometers/dendrometer_canopy_speclib_5nm.csv"))
+speclib <- read.csv(paste0("./R_outputs/speclib_dendrometers/dendrometer_canopy_speclib_1nm.csv"))
 
 # ------------------------------------------------------------------------------
 # ADD IN ARI1 AND ARI2!
@@ -19,8 +20,8 @@ speclib <- read.csv(paste0("./R_outputs/speclib_dendrometers/dendrometer_canopy_
 
 speclib <- speclib %>%
   mutate(
-    ARI1 = (1 / `X548`) - (1 / `X698`),
-    ARI2 = `X798` * ((1 / `X548`) - (1 / `X698`)) #Use 'X803 for 15nm
+    ARI1 = (1 / `X550`) - (1 / `X700`),
+    ARI2 = `X800` * ((1 / `X550`) - (1 / `X700`)) #Use 'X803 for 15nm
   )
 # Directly pass calculated columns into VIs_df after column 11
 VIs_clean <- VIs %>%
@@ -50,13 +51,13 @@ ggplot(long_data, aes(x = Site, y = Value, fill = Site)) +
 # Aggregate the pixel-level data by TreeID using the median value for each index
 agg_data <- VIs_clean %>%
   group_by(TreeID) %>%
-  summarise(across(c(CRI1, CRI2, PSRI, ARI1, ARI2, NDVI), median, na.rm = TRUE)) %>%
+  summarise(across(c(CRI1, CRI2, PSRI, ARI1, ARI2, PRI), median, na.rm = TRUE)) %>%
   ungroup() %>%
   mutate(Site = substr(TreeID, 1, 2))  # Extract site code from TreeID
 
 # Pivot the aggregated data to long format for plotting
 long_agg_data <- agg_data %>%
-  pivot_longer(cols = c(CRI1, CRI2, PSRI, ARI1, ARI2, NDVI),
+  pivot_longer(cols = c(CRI1, CRI2, PSRI, ARI1, ARI2, PRI),
                names_to = "Index",
                values_to = "Value")
 
@@ -64,7 +65,7 @@ long_agg_data <- agg_data %>%
 ggplot(long_agg_data, aes(x = Site, y = Value, fill = Site)) +
   geom_boxplot() +
   facet_wrap(~Index, scales = "free_y") +
-  labs(title = "Dendrometer Tree Canopies Stress Indices (5 nm Resample) - Tree Median Value",
+  labs(title = "Dendrometer Tree Canopies Stress Indices (15 nm Resample) - Tree Median Value",
        x = "Site",
        y = "Index Value") +
   theme_minimal()

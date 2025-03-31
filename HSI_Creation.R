@@ -1,10 +1,10 @@
 library(dplyr)
 library(ggplot2)
 ###Read in canopy VIs and dendro attributes###
-canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_5nm_bytreeid.csv")
+canopy_VIs<-read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm_bytreeid.csv")
 
 # Scale the indices and combine into a singular stress index (HSI)
-indices <- c("ARI1", "ARI2", "CRI1", "CRI2", "PSRI")
+indices <- c("ARI1", "ARI2", "CRI1", "CRI2", "PSRI", "PRI")
 
 # Scaling indices to a standard range (0-1)
 canopy_VIs_scaled <- canopy_VIs
@@ -17,6 +17,33 @@ canopy_VIs_scaled$HSI <- rowMeans(canopy_VIs_scaled[indices], na.rm = TRUE)
 
 # Check resulting dataframe
 head(canopy_VIs_scaled)
+
+#-----------BOX PLOT FOR NEW CUSTOM HSI---------------------------
+
+# BOX PLOT BY TREEID!!
+# Aggregate the pixel-level data by TreeID using the median value for each index
+agg_data <- canopy_VIs_scaled %>%
+  group_by(TreeID) %>%
+  summarise(across(c(HSI), median, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Site = substr(TreeID, 1, 2))  # Extract site code from TreeID
+
+# Pivot the aggregated data to long format for plotting
+long_agg_data <- agg_data %>%
+  pivot_longer(cols = c(HSI),
+               names_to = "Index",
+               values_to = "Value")
+
+# Create the boxplot for each index across sites using the aggregated data
+ggplot(long_agg_data, aes(x = Site, y = Value, fill = Site)) +
+  geom_boxplot() +
+  facet_wrap(~Index, scales = "free_y") +
+  labs(title = "Combined Tree Canopy Stress Indices (15 nm Resample) - Tree Median Value",
+       x = "Site",
+       y = "Index Value") +
+  theme_minimal()
+
+#-------------SCATTERPLOTS OF VIS VS DENDRO ATTRIBUTES-------------------------
 
 ###Join dendro attributes to VIs###
 # Perform the joins using 'Dndrmtr' as the key
