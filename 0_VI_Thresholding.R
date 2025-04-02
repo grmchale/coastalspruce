@@ -3,12 +3,14 @@ source("./Functions/lecospectR.R")
 library(terra)
 
 threshvalue <- 0.2
-Vindex <- "EVI" # Options: "NDVI", "EVI", or "MSR705"
+Vindex <- "EVI" # Options: "FCI1", "EVI", "VIAVG," or "MSR705"
 
 # Define a test function for one ENVI hyperspectral file with options for NDVI, EVI, or MSR705
 test_filter_file <- function(file, threshold = threshvalue, index = Vindex, 
-                             red_band = 155, nir_band = 219, blue_band = 25, 
-                             band750 = 192, band705 = 168, band445 = 27, nir_avg_bands = 190:241, 
+                             red_band = 144, red_edge_band = 179,  # new red edge band for FCI1
+                             nir_band = 219, blue_band = 25, 
+                             band750 = 192, band705 = 168, band445 = 27, 
+                             nir_avg_bands = 190:241, 
                              inspect = FALSE) {
   # Read in the ENVI image (assumes .dat file with accompanying header)
   img <- rast(file)
@@ -16,10 +18,11 @@ test_filter_file <- function(file, threshold = threshvalue, index = Vindex,
   cat("Image has", nlyr(img), "bands.\n")
   
   # Calculate vegetation index based on the selected type
-  if (toupper(index) == "NDVI") {
+  if (toupper(index) == "FCI1") {
+    # FCI1: red x red edge
     red <- img[[red_band]]
-    nir <- img[[nir_band]]
-    veg_index <- (nir - red) / (nir + red)
+    red_edge <- img[[red_edge_band]]
+    veg_index <- red * red_edge
   } else if (toupper(index) == "EVI") {
     if (is.null(blue_band)) {
       stop("For EVI calculation, please specify the blue_band parameter.")
@@ -44,7 +47,7 @@ test_filter_file <- function(file, threshold = threshvalue, index = Vindex,
     # Calculate the average of all specified near-infrared bands
     veg_index <- app(img[[nir_avg_bands]], fun = mean)
   } else {
-    stop("Index must be one of 'NDVI', 'EVI', 'MSR705', or 'IRavg'.")
+    stop("Index must be one of 'FCI1', 'EVI', 'MSR705', or 'IRAVG'.")
   }
   
   # Create a VI mask: pixels meeting the threshold retain the veg_index; others become NA
@@ -86,10 +89,11 @@ print(files)
 
 # Test the filtering function on the first file
 if (length(files) > 0) {
-  # For NDVI filtering (adjust parameters as needed)
   test_result <- test_filter_file(files[1], threshold = threshvalue, index = Vindex, 
-                                  red_band = 155, nir_band = 219, blue_band = 25, 
-                                  band750 = 192, band705 = 168, band445 = 27, nir_avg_bands = 190:241, 
+                                  red_band = 144, red_edge_band = 179, 
+                                  nir_band = 219, blue_band = 25, 
+                                  band750 = 192, band705 = 168, band445 = 27, 
+                                  nir_avg_bands = 190:241, 
                                   inspect = TRUE)
   
 } else {
@@ -99,11 +103,13 @@ if (length(files) > 0) {
 # Once satisfied with the test, loop over all files:
 for (file in files) {
   test_filter_file(file, threshold = threshvalue, index = Vindex, 
-                   red_band = 155, nir_band = 219, blue_band = 25,
-                   band750 = 192, band705 = 168, band445 = 27)
+                   red_band = 144, red_edge_band = 179,
+                   nir_band = 219, blue_band = 25,
+                   band750 = 192, band705 = 168, band445 = 27,
+                   nir_avg_bands = 190:241)
 }
 
-# Display all of the files:
+# Display all of the files--this sorta doesn't work
 dev.new()
 par(mfrow = c(1, 1))
 
