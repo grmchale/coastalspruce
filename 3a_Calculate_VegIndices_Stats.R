@@ -4,7 +4,7 @@ library(dplyr)
 
 # READ IN VEGETATION INDICES----------------------------------------------------
 #Resampled vegetation indices nm spacing (1,5,10,15)
-NM <- "15nm"
+NM <- "5nm"
 #Read in vegetation indices by pixel
 VIs_df <- read.csv(paste0("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_", NM, ".csv"))
 
@@ -45,6 +45,8 @@ VIs_df <- VIs_df %>%
   ) %>%
   relocate(ARI1, ARI2, .after = 11) %>%
   relocate(WBI, .after = last_col())
+
+#----------
 
 # ---------CALCULATE SD, MEAN, AND QUANTILES FOR VEGETATION INDICES W/ ARIs ------------------
 

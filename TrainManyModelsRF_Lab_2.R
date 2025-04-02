@@ -1,13 +1,53 @@
-install.packages("boot")
 library(boot)
 library(randomForest)
 
+#----------------DROP NA COLUMNS IF NEED BE (e.g. ZENTROPY)---------------------
+# First, drop rows with NA in the dependent variable (dvarb)
+df_rf <- df_rf %>% 
+  drop_na(!!sym(dvarb))
+# Then, filter out predictors that contain any NA values
+clean_predictors <- predictors[!sapply(df_rf[, predictors, drop = FALSE], function(x) any(is.na(x)))]
+# Finally, select only the dependent variable and the cleaned predictors
+df_rf <- df_rf %>% 
+  select(!!sym(dvarb), all_of(clean_predictors))
+
+#-----------------CHOOSE DEPENDENT + PREDICTOR VARIABLES-------------------------
 # Dependent variable (can be dynamically changed)
-dvarb <- "TWD"  
+dvarb <- "zg_fraction"  
 # Predictor columns (dynamic)
-predictors <- colnames(df_rf)[1:490]
+predictors <- colnames(df_rf)[3:544]
+
+#-----------------PCA FOR SPECTRAL LIBRARY-------------------------------------
+
+# Define dependent variable and original predictor columns
+original_predictors <- colnames(df_rf)[3:544]
+
+# Run PCA on the original predictors (assuming df_rf has no missing values in these columns)
+pca_res <- prcomp(df_rf[, original_predictors], center = TRUE, scale. = TRUE)
+
+# Look at the explained variance (proportion and cumulative)
+explained <- summary(pca_res)$importance[2, ]       # Proportion of variance explained
+cum_explained <- summary(pca_res)$importance[3, ]     # Cumulative variance explained
+print(cum_explained)
+
+# Decide on number of PCs:
+# Here we use PC1 and PC2, and include PC3 if it adds at least 5% extra variance (i.e., if cum_explained[3] - cum_explained[2] >= 0.05).
+n_pcs <- ifelse((cum_explained[3] - cum_explained[2]) >= 0.05, 3, 2)
+cat("Using", n_pcs, "principal components.\n")
+
+# Extract the chosen PC scores and rename them
+pc_scores <- as.data.frame(pca_res$x[, 1:n_pcs])
+colnames(pc_scores) <- paste0("PC", 1:n_pcs)
+
+# Add the PC scores to the original data frame
+df_rf <- cbind(df_rf, pc_scores)
+
+# Update predictors to be the selected PCs
+predictors <- paste0("PC", 1:n_pcs)
+print(predictors)
+#---------------------BOOTSTRAP SETUP------------------------------
 # Number of bootstrap replicates
-n_boot <- 100  # adjust as needed
+n_boot <- 50  # adjust as needed
 
 # Storage for results
 results <- data.frame(
@@ -17,15 +57,57 @@ results <- data.frame(
   Rsq_train = numeric(n_boot),
   Rsq_test = numeric(n_boot)
 )
+#--------------------BOOTSTRAP WITH REGRESSION - PCA INPUT------------------------
+set.seed(123)
 
-# Set seed for reproducibility
+for(i in 1:n_boot) {
+  
+  # Create an 80/20 split without replacement so that the test set is guaranteed to have data
+  all_indices <- seq_len(nrow(df_rf))
+  train_indices <- sample(all_indices, size = floor(0.7 * nrow(df_rf)), replace = FALSE)
+  test_indices <- setdiff(all_indices, train_indices)
+  
+  train_data <- df_rf[train_indices, c(dvarb, predictors)]
+  test_data  <- df_rf[test_indices, c(dvarb, predictors)]
+  
+  # Fit a linear regression model
+  formula_reg <- as.formula(paste(dvarb, "~", paste(predictors, collapse = "+")))
+  lm_model <- lm(formula_reg, data = train_data)
+  
+  # Make predictions on both train and test data
+  pred_train <- predict(lm_model, newdata = train_data)
+  pred_test  <- predict(lm_model, newdata = test_data)
+  
+  # Get actual values
+  actual_train <- train_data[[dvarb]]
+  actual_test  <- test_data[[dvarb]]
+  
+  # Calculate RMSE for train and test
+  rmse_train <- sqrt(mean((actual_train - pred_train)^2))
+  rmse_test  <- sqrt(mean((actual_test - pred_test)^2))
+  
+  # Calculate R-squared (using squared correlation)
+  rsq_train <- cor(actual_train, pred_train)^2
+  rsq_test  <- cor(actual_test, pred_test)^2
+  
+  # Store the performance metrics
+  results$RMSE_train[i] <- rmse_train
+  results$RMSE_test[i]  <- rmse_test
+  results$Rsq_train[i]  <- rsq_train
+  results$Rsq_test[i]   <- rsq_test
+}
+
+# View the first few rows of results
+head(results)
+
+#---------------------BOOTSTRAP WITH RANDOM FOREST------------------------------
 set.seed(123)
 
 # Bootstrap iterations
 for(i in 1:n_boot){
   
   # Create 80/20 random split
-  sample_indices <- sample(nrow(df_rf), size = 0.8 * nrow(df_rf), replace = TRUE)
+  sample_indices <- sample(nrow(df_rf), size = 0.7 * nrow(df_rf), replace = TRUE)
   
   train_data <- df_rf[sample_indices, c(dvarb, predictors)]
   test_data  <- df_rf[-unique(sample_indices), c(dvarb, predictors)] # ensure test is different
@@ -64,7 +146,7 @@ for(i in 1:n_boot){
 # View summarized results
 head(results)
 
-# Summarize variability
+# ----------Summarize variability ACROSS BOOTSTRAPS------------------------------
 summary_results <- data.frame(
   Metric = c("RMSE_train", "RMSE_test", "Rsq_train", "Rsq_test"),
   Mean = c(mean(results$RMSE_train), mean(results$RMSE_test),

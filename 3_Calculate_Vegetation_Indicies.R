@@ -9,35 +9,75 @@ library(hsdar)
 library(rgeos)
 library(sf)
 library(doFuture)
+library(torch)
 source("Functions/spectral_operations.R")
 
-###CALCULATE VEGETATION INDICIES FOR LOADED IN SPECTRAL LIBRARY###
-#RDS file for using when returning to code
-plots_image_spectra<-readRDS("./R_outputs/speclib_dendrometers/dataframes/dendrometer_canopy_speclib_15nm.rds")
+#Resampled vegetation indices nm spacing (1,5,10,15)
+NM <- "15nm"
 
-#Cast the spectral library to a data frame, select which version of resampled spectral library (5, 10, 15 nm)
-plots_image_spectra_df<- speclib_to_df(plots_image_spectra)
-plots_image_spectra_df<- plots_image_spectra_df %>% select(-c(3:10)) #remove other attributes besides wavelengths
+#RDS file for using when returning to code
+speclib<-readRDS(paste0("./R_outputs/speclib_dendrometers/dataframes/dendrometer_canopy_speclib_", NM, ".rds"))
+
+#Cast the spectral library to a data frame
+speclib_df<- speclib_to_df(speclib)
+speclib_df<- speclib_df %>% select(-c(3:10)) #remove other attributes besides wavelengths
 
 #Check unique entries
-plots_image_spectra_df %>% group_by(TreeID) %>% tally() %>% 
+speclib_df %>% group_by(TreeID) %>% tally() %>% 
   filter(n>1) #%>% ungroup() %>% select(Flight, Field, Plot) %>% unique %>% print(n=200)
 getAnywhere("get_required_veg_indices")
 
+###################### OPTIONAL: FILTER OUT BRIGHTEST PIXELS #######################################
+
+############ CALCULATE VEGETATION INDICIES FOR LOADED IN SPECTRAL LIBRARY ##########
+
 #Calculate vegetation indices for the pixels
-plots_image_spectra_VIs<-get_vegetation_indices(plots_image_spectra_df, NULL)
-#plots_image_spectra_VIs<-calc_veg_index(plots_image_spectra_df, NA)
+VIs_df<-get_vegetation_indices(speclib_df, NULL)
+#VIs_df<-calc_veg_index(speclib_df, NA)
+
+# Create ARI1, ARI2, and WBI
+if (NM == "1nm") {
+  speclib_df <- speclib_df %>%
+    mutate(
+      ARI1 = (1 / `X550`) - (1 / `X700`),
+      ARI2 = `X800` * ((1 / `X550`) - (1 / `X700`)),
+      WBI  = (`X970` / `X900`)
+    )
+} else if (NM == "15nm") {
+  speclib_df <- speclib_df %>%
+    mutate(
+      ARI1 = (1 / `X548`) - (1 / `X698`),
+      ARI2 = `X803` * ((1 / `X548`) - (1 / `X698`)),  # Explicitly use X803 for 15nm
+      WBI  = (`X968` / `X893`)                         # Use X893 for 15nm
+    )
+} else {
+  speclib_df <- speclib_df %>%
+    mutate(
+      ARI1 = (1 / `X548`) - (1 / `X698`),
+      ARI2 = `X798` * ((1 / `X548`) - (1 / `X698`)),
+      WBI  = (`X968` / `X898`)
+    )
+}
+
+# Directly pass calculated columns into VIs_df
+VIs_df <- VIs_df %>%
+  mutate(
+    ARI1 = speclib_df$ARI1,
+    ARI2 = speclib_df$ARI2,
+    WBI  = speclib_df$WBI
+  ) %>%
 
 #Adds categorical variables back in
-plots_image_spectra_VIs<-cbind(as.data.frame(plots_image_spectra)[,1:10],plots_image_spectra_VIs) 
+VIs_df<-cbind(as.data.frame(plots_image_spectra)[,1:10],VIs_df) 
 
+############ CALCULATE MEDIAN VI VALUE FOR EACH TREEID ###########################
 ##Create median VI value per TreeID
-median_VIs <- plots_image_spectra_VIs %>%
+median_VIs <- VIs_df %>%
   #select(-106) %>%
   group_by(TreeID) %>%
   summarise(across(10:104, ~ median(.x, na.rm = TRUE)))
 # Extract a unique row per TreeID from the original dataframe
-plot_info <- plots_image_spectra_VIs %>%
+plot_info <- VIs_df %>%
   select(TreeID, sample_name, Site, Species, X, Y, CC, Dndrmtr, DBH, Tag) %>%
   distinct(TreeID, .keep_all = TRUE)
 # Join the median_VIs (which has one row per TreeID) with the unique plot_info
@@ -63,56 +103,5 @@ median_VIs_final <- median_VIs_final %>%
   select(1:10, ARI1, ARI2, everything())
 
 #Export VIs to .csv
-write.csv(plots_image_spectra_VIs,"./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm.csv")
+write.csv(VIs_df,"./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm.csv")
 write.csv(median_VIs_final,"./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm_bytreeid.csv")
-
-###CREATE SEPERATE .CSVs PARSING OUT SEPERATE PORTIONS OF THE STATS###
-library(dplyr)
-library(tidyr)
-
-pivot_wide <- plots_image_spectra_VIs_stats_df_final %>%
-  # Select only the columns we want to keep
-  select(Site, Species, X, Y, CC, UID, VegIndices, Mean) %>%
-  
-  # Pivot the data so that each VegIndices becomes a column
-  pivot_wider(
-    names_from = VegIndices,
-    values_from = Mean
-  )
-#Join DBH, Dendrometer, Notes
-pivot_wide_2 <- pivot_wide %>%
-  left_join(
-    Overstory %>% select(TreeID, DBH, Dendrometer, Notes),
-    by = c("UID" = "TreeID")
-  )
-#Add in SD just in case
-pivot_wide_SD <- plots_image_spectra_VIs_stats_df_final %>%
-  # Keep the key identifying columns plus VegIndices, Mean, and SD
-  select(Site, Species, X, Y, CC, UID, VegIndices, Mean, SD) %>% 
-  pivot_wider(
-    names_from = VegIndices, 
-    values_from = c(Mean, SD), 
-    names_sep = ""  # This will create columns like Boochs2Mean, Boochs2SD, etc.
-  )
-#Join DBH, Dendrometer, Notes to SD
-pivot_wide_SD <- pivot_wide_SD %>%
-  left_join(
-    Overstory %>% select(TreeID, DBH, Dendrometer, Notes),
-    by = c("UID" = "TreeID")
-  )
-
-#Write both of these puppies to a .csv
-write.csv(pivot_wide_2, "./R_outputs/speclib/VIs_stats_1nm_means.csv")
-write.csv(pivot_wide_SD, "./R_outputs/speclib/VIs_stats_1nm_means_SD.csv")
-
-####Bin MASTER csv by TreeID/Site (only bands 398-999 here)####
-library(dplyr)
-
-MASTER_joined<-readRDS("G:/HyperspectralUAV/R_outputs/speclib/MASTER_joined.rds")
-
-MASTER_Site_speclib <- MASTER_joined %>%
-  group_by(Site) %>%
-  summarise(across(where(is.numeric), mean, na.rm = TRUE))
-
-MASTER_TreeID_speclib_2<-MASTER_TreeID_speclib[, c(1,5:606)]
-write.csv(MASTER_TreeID_speclib_2, "./R_outputs/speclib/TreeID_speclib_summary.csv" )
