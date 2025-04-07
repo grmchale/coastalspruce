@@ -10,20 +10,21 @@ library(rgeos)
 library(sf)
 library(doFuture)
 library(torch)
-source("Functions/spectral_operations.R")
+source("./Functions/spectral_operations.R")
 
 #Resampled vegetation indices nm spacing (1,5,10,15)
-NM <- "15nm"
+NM <- "1nm"
 
 #RDS file for using when returning to code
-speclib<-readRDS(paste0("./R_outputs/speclib_dendrometers/dataframes/dendrometer_canopy_speclib_", NM, ".rds"))
+speclib<-readRDS(paste0("./R_outputs/speclib_amoebas/dataframes/amoebas_speclib_", NM, ".rds"))
+speclib<-Canopy_image_spectra_df
 
 #Cast the spectral library to a data frame
-speclib_df<- speclib_to_df(speclib)
-speclib_df<- speclib_df %>% select(-c(3:10)) #remove other attributes besides wavelengths
+speclib_df<- speclib
+#speclib_df<- speclib_df %>% select(-c(3:10)) #remove other attributes besides wavelengths
 
 #Check unique entries
-speclib_df %>% group_by(TreeID) %>% tally() %>% 
+speclib_df %>% group_by(Sample) %>% tally() %>% 
   filter(n>1) #%>% ungroup() %>% select(Flight, Field, Plot) %>% unique %>% print(n=200)
 getAnywhere("get_required_veg_indices")
 
@@ -39,9 +40,9 @@ VIs_df<-get_vegetation_indices(speclib_df, NULL)
 if (NM == "1nm") {
   speclib_df <- speclib_df %>%
     mutate(
-      ARI1 = (1 / `X550`) - (1 / `X700`),
-      ARI2 = `X800` * ((1 / `X550`) - (1 / `X700`)),
-      WBI  = (`X970` / `X900`)
+      ARI1 = (1 / `550`) - (1 / `700`),
+      ARI2 = `800` * ((1 / `550`) - (1 / `700`)),
+      WBI  = (`970` / `900`)
     )
 } else if (NM == "15nm") {
   speclib_df <- speclib_df %>%
@@ -53,9 +54,9 @@ if (NM == "1nm") {
 } else {
   speclib_df <- speclib_df %>%
     mutate(
-      ARI1 = (1 / `X548`) - (1 / `X698`),
-      ARI2 = `X798` * ((1 / `X548`) - (1 / `X698`)),
-      WBI  = (`X968` / `X898`)
+      ARI1 = (1 / `548`) - (1 / `698`),
+      ARI2 = `798` * ((1 / `548`) - (1 / `698`)),
+      WBI  = (`968` / `898`)
     )
 }
 
@@ -66,9 +67,10 @@ VIs_df <- VIs_df %>%
     ARI2 = speclib_df$ARI2,
     WBI  = speclib_df$WBI
   ) %>%
-
+  relocate(ARI1, ARI2, .before = 1) %>%
+  relocate(WBI, .after = last_col())
 #Adds categorical variables back in
-VIs_df<-cbind(as.data.frame(plots_image_spectra)[,1:10],VIs_df) 
+VIs_df<-cbind(as.data.frame(speclib_df)[,1:2],VIs_df) 
 
 ############ CALCULATE MEDIAN VI VALUE FOR EACH TREEID ###########################
 ##Create median VI value per TreeID
@@ -103,5 +105,5 @@ median_VIs_final <- median_VIs_final %>%
   select(1:10, ARI1, ARI2, everything())
 
 #Export VIs to .csv
-write.csv(VIs_df,"./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm.csv")
+write.csv(VIs_df,"./R_outputs/speclib_amoebas/veg_indices/amoeba_VIs_1nm.csv")
 write.csv(median_VIs_final,"./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm_bytreeid.csv")
