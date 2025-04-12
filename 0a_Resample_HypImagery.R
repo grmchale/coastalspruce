@@ -2,7 +2,7 @@
 library(terra)
 
 # Paths
-input_dir <- "./R_outputs/canopy_spectra_amoebas/"
+input_dir <- "G:/LiD-Hyp/hyp_files"
 output_dir <- "G:/HyperspectralUAV/R_outputs/canopy_spectra_amoebas/aggregated_amoebas/"
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 

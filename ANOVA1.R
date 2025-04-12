@@ -39,32 +39,6 @@ pairwise_results
 write.csv(adonis_results, "./R_outputs/modelling/perMANOVA/adonispma_results_amoebas_v1.csv")
 write.csv(pairwise_results,"./R_outputs/modelling/perMANOVA/pairwise_results_amoebas_v1.csv")
 
-################# Non-metric Multidimensional Scaling (NMDS) ################
-# NMDS using Euclidean distance
-set.seed(42) # for reproducibility
-nmds <- metaMDS(VIs_df_sampled[, c("ARI1", "ARI2", "CRI1", "CRI2", "PSRI", "PRI")],
-                distance = "euclidean", 
-                k = 2, 
-                trymax = 100)
-
-# Extract site scores
-nmds_scores <- as.data.frame(scores(nmds))
-nmds_scores$Site <- VIs_df_sampled$Sample
-
-# Plot using ggplot2
-ggplot(nmds_scores, aes(x = NMDS1, y = NMDS2, color = Site)) +
-  geom_point(alpha = 0.5) +
-  theme_minimal() +
-  theme(legend.position = "right") +
-  ggtitle("NMDS: Vegetation Index Differences Between Sites")
-# Plot using ggplot2 with axis limits to remove outliers
-ggplot(nmds_scores, aes(x = NMDS1, y = NMDS2, color = Site)) +
-  geom_point(alpha = 0.5) +
-  coord_cartesian(xlim = c(-50, 100), ylim = c(-100, 100)) +  # zooms in without dropping data
-  theme_minimal() +
-  theme(legend.position = "right") +
-  ggtitle("NMDS: Vegetation Index Differences Between Sites")
-
 ############### BOX PLOT CREATION ##################################
 
 ###Read in canopy VIs and dendro attributes###
