@@ -1,58 +1,49 @@
-############# AGGREGATE UAV PIXELS TO COARSER SPATIAL RESOLUTION ###############
+############# AGGREGATE UAV PIXELS TO 1 m RESOLUTION (Using Aggregate) ###############
 library(terra)
 
-# Paths
+# Define input and output directories
 input_dir <- "G:/LiD-Hyp/hyp_files"
-output_dir <- "G:/HyperspectralUAV/R_outputs/canopy_spectra_amoebas/aggregated_amoebas/"
+output_dir <- "G:/LiD-Hyp/_aggregated_hyp"
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-# List .dat files
+# List all .dat files
 amoebas <- list.files(input_dir, pattern = "\\.dat$", full.names = TRUE)
+print(amoebas)
 
-# Set desired resolution and aggregation factor
-target_res <- 1  # desired resolution in meters
-agg_factor <- round(target_res / 0.1)
+# Set aggregation factor (assuming original resolution ~0.1 m, adjust if needed)
+agg_factor <- 10  # aggregate factor of 10 for 1 m resolution
 
-# --- Test function on one .dat file ---
-test_resample_aggregate <- function(test_file, agg_factor, target_res) {
-  cat("Testing on file:", basename(test_file), "\n")
-  
-  # Read raster
-  rast <- rast(test_file)
-  NAflag(rast) <- NaN
-  
-  # Aggregate
-  aggregated <- aggregate(rast, fact = agg_factor, fun = mean, na.rm = TRUE)
-  plotRGB(aggregated, r=10, g=20, b=30, scale=1, stretch="lin", main="Aggregated Result (bands 10,20,30)")
-  
-  # Resample
-  #template <- rast(extent=ext(rast), resolution=target_res, crs=crs(rast))
-  #resampled <- resample(rast, template, method="bilinear")
-  #plotRGB(resampled, r=10, g=20, b=30, scale=1, stretch="lin", main="Resampled Result (bands 10,20,30)")
-}
+# Test aggregation on the first raster to visually check results
+rast_orig_test <- rast(amoebas[1])
+NAflag(rast_orig_test) <- NaN
 
-# Run the test function on first .dat file only:
-test_resample_aggregate(amoebas[1], agg_factor, target_res)
+# Aggregate the first raster
+aggregated_test <- aggregate(rast_orig_test, fact = agg_factor, fun = mean, na.rm = TRUE)
 
-#########--- Loop through all files (once satisfied with the test) ---##########
+# Plot RGB composite to check aggregation
+plotRGB(aggregated_test, r=10, g=20, b=30, scale=1, stretch="lin", main="Aggregated Test Raster")
+
+# Loop through each file and aggregate
 for (file in amoebas) {
-  cat("Processing:", basename(file), "\n")
+  cat("Aggregating:", basename(file), "\n")
   
   # Read raster
-  rast <- rast(file)
-  NAflag(rast) <- NaN
+  rast_orig <- rast(file)
+  NAflag(rast_orig) <- NaN
   
-  # Aggregate
-  aggregated <- aggregate(rast, fact = agg_factor, fun = mean, na.rm = TRUE)
-  agg_outfile <- file.path(output_dir, paste0(tools::file_path_sans_ext(basename(file)), "_aggregated.dat"))
-  writeRaster(aggregated, agg_outfile, overwrite = TRUE, filetype = "ENVI")
+  # Aggregate raster
+  aggregated_rast <- aggregate(rast_orig, fact = agg_factor, fun = mean, na.rm = TRUE)
   
-  # Resample
-  #template <- rast(extent=ext(rast), resolution=target_res, crs=crs(rast))
-  #resampled <- resample(rast, template, method = "bilinear")
-  #res_outfile <- file.path(output_dir, paste0(tools::file_path_sans_ext(basename(file)), "_resampled.dat"))
-  #writeRaster(resampled, res_outfile, overwrite = TRUE, filetype = "ENVI")
+  # Define output filename and write raster
+  aggregated_outfile <- file.path(
+    output_dir,
+    paste0(tools::file_path_sans_ext(basename(file)), "_1m_aggregated.dat")
+  )
+  
+  writeRaster(aggregated_rast, aggregated_outfile, overwrite = TRUE, filetype = "ENVI")
 }
+
+cat("Aggregation complete!", "\n")
 
 ####### COUNT NUMBER OF PIXELS IN EACH FILE ############################
 # Directory with aggregated .dat files

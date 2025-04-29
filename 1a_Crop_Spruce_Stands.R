@@ -12,39 +12,7 @@ library(rgeos)
 library(sf)
 library(doFuture)
 
-###Load in ALL lecospec packages??###
-packages <- c(
-  "gdalUtils", "rgeos", "sf", "sp", "mapview", "maptools",
-  "doParallel", "randomForest", "ranger", "missForest", "caret",
-  "e1071", "raster", "spectrolab", "tidyverse", "useful", "SpaDES",
-  "SpaDES.tools", "Polychrome", "gplots", "rasterVis", "RColorBrewer",
-  "naniar", "doSNOW", "snow", "rjson", "arrow", "RhpcBLASctl", "plotly",
-  "readr", "terra", "pivottabler", "webshot", "xgboost", "permute",
-  "pls", "landscapemetrics", "landscapetools", "stars", "maptiles"
-)
-packages <- unique(packages)
-for(pkg in packages) {
-  library(pkg, character.only = TRUE)
-}
 
-#Define file paths - NO .DATs ON THE END HERE?
-GI_image_path = "G:/HyperspectralUAV/Hyperspectral_Clips/Understory_filtered/GI_Colby_filtered.dat"
-CE_image_path = "G:/HyperspectralUAV/Hyperspectral_Clips/Understory_filtered/CE_Colby_filtered_1.dat"
-HI_image_path = "G:/HyperspectralUAV/Hyperspectral_Clips/Understory_filtered/HI_Colby_filtered.dat"
-CC_image_path = "G:/HyperspectralUAV/Hyperspectral_Clips/Understory_filtered/CC_Colby_filtered_1.dat"
-FP_image_path = "G:/HyperspectralUAV/Hyperspectral_Clips/Understory_filtered/FP_Colby_east_filtered_2.dat"
-FP2_image_path = "G:/HyperspectralUAV/Hyperspectral_Clips/Understory_filtered/FP_Colby_west_filtered_2.dat"
-RI_image_path = "G:/HyperspectralUAV/Hyperspectral_Clips/Understory_filtered/RI-IP_Colby_filtered.dat"
-
-#Load hyperspectral clips to an object
-spruce_imgs<-c(
-  #CC_image_path,
-  #CE_image_path,
-  #FP_image_path,
-  #FP2_image_path,
-  #GI_image_path,
-  HI_image_path)#,
-  #RI_image_path)
 
 # Define the directory containing the filtered hyperspectral .dat files
 filtered_img_dir <- "G:/LiD-Hyp/filtered_hyp"

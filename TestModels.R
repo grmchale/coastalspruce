@@ -205,7 +205,17 @@ rf_model <- train(zg_fraction ~ .,
 print(rf_model)
 varImp(rf_model)
 
-
+# Create output directory if it doesn't exist
+output_dir <- "G:/HyperspectralUAV/R_outputs/modelling/rf/ALLvariables_zg_fraction_rf"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+# Save the RF model object
+saveRDS(rf_model, file = file.path(output_dir, "zg_fraction_rf_model.rds"))
+# Save the variable importance table
+importance_vals <- varImp(rf_model)$importance
+write.csv(importance_vals, file = file.path(output_dir, "zg_fraction_variable_importance.csv"), row.names = TRUE)
+# Save model performance metrics (e.g., RMSE, Rsquared)
+performance_metrics <- rf_model$results
+write.csv(performance_metrics, file = file.path(output_dir, "zg_fraction_model_performance.csv"), row.names = FALSE)
 
 #------------------TESTING OF MODELS USING PCA INPUTS (DEPRECIATED)----------------------------------
 # Load required packages
