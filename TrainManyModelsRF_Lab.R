@@ -25,18 +25,27 @@ DBH <- read.csv("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_1n
 drone_dendro<-read.csv("G:/Dendrometers/drone_dendro.csv")
 cumulative_zg<-read.csv("G:/Dendrometers/cumulative_zg.csv")
 uptoflight_zg<-read.csv("G:/Dendrometers/cumulative_zg_uptoflight.csv")
+uptoflight_intervals_zg<-read.csv("G:/Dendrometers/uptoflight_intervals_zg.csv")
 
 # ------------------------------------------------------------------------------------------------
 
 ## Decide which RF dataframe to use, set dataframe
 # Define dependent/response df and variable
 dvarb <- "zg_fraction"
-df_dep <- "uptoflight_zg"
+df_dep <- "uptoflight_intervals_zg"
 
 #Joined dvarb & canopy VIs
 df_rf <- canopy_VIs %>%
   inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
   drop_na(!!sym(dvarb))  # remove rows with no dvarb value
+# Joined dvarbs & canopy VI stats (all nms)
+df_rf <- VIstats_merged %>%
+  inner_join(
+    get(df_dep) %>% select(TreeID, zg_fraction, zg_fraction_7, zg_fraction_15, 
+                           zg_fraction_30, zg_fraction_60, zg_fraction_90), 
+    by = "TreeID"
+  ) #%>%
+  #drop_na(all_of(dvarb))
 #Joined dvarb, spectral library & canopy VIs
 df_rf <- speclib_rf %>% 
   #inner_join(canopy_VIs, by = "TreeID", keep = FALSE) %>%  

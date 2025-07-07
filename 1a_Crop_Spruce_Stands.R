@@ -52,6 +52,7 @@ lapply(1:length(spruce_imgs), function(x) {
 tst_canopy_files<-list.files("./R_outputs/canopy_spectra_amoebas/")
 tst_canopy<-terra::rast(paste("./R_outputs/canopy_spectra_amoebas/", tst_canopy_files[1], sep=""))
 tst_canopy_files
+
 ########################################################################################################################
 ##################### SPRUCE AMOEBA WORKFLOW (CANOPIES ABOVE) #####################
 # Define the directory containing the filtered hyperspectral .dat files

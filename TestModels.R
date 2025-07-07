@@ -1,5 +1,46 @@
 ##################################################################################
-#-------CREATE CORRELATION MATRIX BETWEEN VARIABLES - ZG_DAYS VS. SPECTRAL, ETC.-----
+#-------CREATE CORRELATION MATRIX BETWEEN SEVERAL VARIABLES----------------------
+# Ensure the output directory exists
+dir.create("./R_outputs/modelling/correlations/", recursive = TRUE, showWarnings = FALSE)
+
+# Define the column indices clearly
+spectral_cols <- 2:1961       # Columns of spectral variables
+zg_cols <- 1962:1967          # Columns of zg_fraction variants
+
+# Extract variable names
+spectral_vars <- names(df_rf)[spectral_cols]
+zg_vars <- names(df_rf)[zg_cols]
+
+# Initialize an empty correlation dataframe (1960 rows, 6 columns)
+cor_matrix <- data.frame(variable = spectral_vars)
+
+# Calculate Spearman correlations and store results
+for (zg_var in zg_vars) {
+  cor_matrix[[zg_var]] <- sapply(spectral_vars, function(spec_var) {
+    cor(df_rf[[zg_var]], df_rf[[spec_var]], method = "spearman", use = "complete.obs")
+  })
+}
+
+# Export the combined correlation matrix
+write.csv(cor_matrix, "./R_outputs/modelling/correlations/zg_fractions_all_VIstats.csv", row.names = FALSE)
+
+# Additionally, create and export separate sorted dataframes for each zg_fraction variant
+for (zg_var in zg_vars) {
+  cor_df_individual <- data.frame(
+    variable = spectral_vars,
+    correlation = cor_matrix[[zg_var]]
+  )
+  
+  # Sort by absolute correlation (strongest first)
+  cor_df_individual <- cor_df_individual[order(-abs(cor_df_individual$correlation)), ]
+  
+  # Export each dataframe
+  filename <- paste0("./R_outputs/modelling/correlations/", zg_var, "_correlations.csv")
+  write.csv(cor_df_individual, filename, row.names = FALSE)
+}
+
+##################################################################################
+#-------CREATE CORRELATION MATRIX BETWEEN 2 VARIABLES - ZG_DAYS VS. SPECTRAL, ETC.-----
 
 # Define the columns of interest (columns 3 to 2830)
 all_vars <- names(df_rf)[3:2830]
@@ -217,6 +258,7 @@ write.csv(importance_vals, file = file.path(output_dir, "zg_fraction_variable_im
 performance_metrics <- rf_model$results
 write.csv(performance_metrics, file = file.path(output_dir, "zg_fraction_model_performance.csv"), row.names = FALSE)
 
+##################################################################################################
 #------------------TESTING OF MODELS USING PCA INPUTS (DEPRECIATED)----------------------------------
 # Load required packages
 library(caret)
