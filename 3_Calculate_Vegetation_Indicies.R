@@ -36,7 +36,7 @@ getAnywhere("get_required_veg_indices")
 VIs_df<-get_vegetation_indices(speclib_df, NULL)
 #VIs_df<-calc_veg_index(speclib_df, NA)
 
-# Create ARI1, ARI2, and WBI
+# Create ARI1, ARI2, and WBI (DEPRECIATED)
 if (NM == "1nm") {
   speclib_df <- speclib_df %>%
     mutate(
