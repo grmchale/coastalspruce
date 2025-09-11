@@ -12,7 +12,89 @@ library(rgeos)
 library(sf)
 library(doFuture)
 
+###########################################################################################################
+########################### CROP SPRUCE CANOPIES (CHRONOLOGY WORKFLOW) ####################################
 
+# =========================
+# USER-DEFINED PATHS & SETTINGS
+# =========================
+filtered_img_dir <- "G:/LiD-Hyp/_filtered_hyp_EVI02"
+polygon_shapefile <- "G:/HyperspectralUAV/Hyperspectral_Vectors/chronology_crowns/Chronology_Crowns1.shp"
+polygon_id_field <- "HypCLIP"
+output_dir <- "./R_outputs/canopy_spectra_chronologies/"
+n_preview <- 5  # Number of previews before batch processing
+
+# =========================
+# LOAD FILES
+# =========================
+# List of available .dat raster files
+raster_files <- list.files(filtered_img_dir, pattern = "\\.dat$", full.names = TRUE)
+raster_names <- tools::file_path_sans_ext(basename(raster_files))
+
+# Load the full canopy shapefile (multiple polygons)
+canopies <- terra::vect(polygon_shapefile)
+
+# =========================
+# FILTER POLYGONS TO THOSE MATCHING AVAILABLE RASTERS
+# =========================
+canopies$HypCLIP_base <- tools::file_path_sans_ext(basename(canopies[[polygon_id_field]]))
+valid_polygons <- canopies[canopies$HypCLIP_base %in% raster_names, ]
+split_polys <- split(valid_polygons, valid_polygons$HypCLIP_base)
+
+cat("Number of raster files with matching polygons:", length(split_polys), "\n")
+
+# =========================
+# PREVIEW FIRST n_preview CROPPED POLYGONS
+# =========================
+preview_names <- names(split_polys)[1:min(n_preview, length(split_polys))]
+
+for (name in preview_names) {
+  raster_path <- file.path(filtered_img_dir, paste0(name, ".dat"))
+  r <- terra::rast(raster_path)
+  polys <- split_polys[[name]]
+  for (i in 1:length(polys)) {
+    crop_i <- terra::crop(r, polys[i])
+    mask_i <- terra::mask(crop_i, polys[i])
+    plotRGB(mask_i, r = 133, g = 84, b = 41, stretch = "lin", main = paste(name, "-", i))
+    Sys.sleep(1)  # Pause briefly between previews
+  }
+}
+
+# Ask user whether to continue
+cat("\nPreview complete. Proceed with batch processing? [y/n]: ")
+response <- tolower(scan(what = character(), nmax = 1, quiet = TRUE))
+if (response != "y") {
+  stop("Batch processing aborted by user.")
+}
+
+# =========================
+# MAIN CROPPING LOOP
+# =========================
+lapply(names(split_polys), function(name) {
+  raster_path <- file.path(filtered_img_dir, paste0(name, ".dat"))
+  r <- terra::rast(raster_path)
+  original_names <- names(r)
+  polys <- split_polys[[name]]
+  
+  lapply(1:length(polys), function(i) {
+    clipped <- terra::mask(terra::crop(r, polys[i]), polys[i])
+    bandnames(clipped) <- original_names
+    
+    # Get TreeID and sanitize
+    tree_id <- as.character(polys[i][["TreeID"]])
+    tree_id <- gsub("[^A-Za-z0-9_\\-]", "_", tree_id)
+    out_name <- file.path(output_dir, paste0(tree_id, ".dat"))
+    
+    writeRaster(clipped, out_name, overwrite = TRUE, filetype = "ENVI")
+    rm(clipped)
+  })
+  
+  rm(r)
+  gc()
+})
+
+###########################################################################################################
+########################### CROP SPRUCE CANOPIES (DENDROMETER WORKFLOW) ###################################
 
 # Define the directory containing the filtered hyperspectral .dat files
 filtered_img_dir <- "G:/LiD-Hyp/filtered_hyp"

@@ -3,6 +3,9 @@ library(sf)
 library(dplyr)
 library(tools)
 
+############################################################################################
+############### CLIP LIDAR AMOEBAS! ############################
+
 # Define directories
 shapefile_path <- "G:/LiDAR/LiDAR_Shapefiles/Amoebas/lidar_amoebas.shp"
 las_dir <- "G:/LiDAR/Normalized/Clipped_to_PlotsPatches"
@@ -12,7 +15,7 @@ output_dir <- "G:/LiDAR/Normalized/LiDAR_Amoebas"
 amoebas <- st_read(shapefile_path)
 
 # Optional: filter for a single ID if needed (comment this line out to process all)
-# amoebas <- filter(amoebas, ID == "GI")
+# amoebas <- filter(amoebas, ID == "BI")
 
 # Loop over each row of the shapefile
 for (i in 1:nrow(amoebas)) {
@@ -56,3 +59,6 @@ for (i in 1:nrow(amoebas)) {
   writeLAS(las_clip, output_path)
   message(paste("Saved:", output_path))
 }
+
+##########################################################################################
+####################### CLIP LIDAR TO CROWNS ############################
