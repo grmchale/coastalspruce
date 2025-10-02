@@ -6,47 +6,7 @@ library(dplyr)
 #Resampled vegetation indices nm spacing (1,5,10,15)
 NM <- "5nm"
 #Read in vegetation indices by pixel
-VIs_df <- read.csv(paste0("./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_", NM, ".csv"))
-
-# ----------------ADD IN ARI1, ARI2, and WBI FIRST------------------------------
-# Read in spectral library
-speclib <- read.csv(paste0("./R_outputs/speclib_dendrometers/dendrometer_canopy_speclib_", NM, ".csv"))
-
-# Create ARI1, ARI2, and WBI
-if (NM == "1nm") {
-  speclib <- speclib %>%
-    mutate(
-      ARI1 = (1 / `X550`) - (1 / `X700`),
-      ARI2 = `X800` * ((1 / `X550`) - (1 / `X700`)),
-      WBI  = (`X970` / `X900`)
-    )
-} else if (NM == "15nm") {
-  speclib <- speclib %>%
-    mutate(
-      ARI1 = (1 / `X548`) - (1 / `X698`),
-      ARI2 = `X803` * ((1 / `X548`) - (1 / `X698`)),  # Explicitly use X803 for 15nm
-      WBI  = (`X968` / `X893`)                         # Use X893 for 15nm
-    )
-} else {
-  speclib <- speclib %>%
-    mutate(
-      ARI1 = (1 / `X548`) - (1 / `X698`),
-      ARI2 = `X798` * ((1 / `X548`) - (1 / `X698`)),
-      WBI  = (`X968` / `X898`)
-    )
-}
-
-# Directly pass calculated columns into VIs_df
-VIs_df <- VIs_df %>%
-  mutate(
-    ARI1 = speclib$ARI1,
-    ARI2 = speclib$ARI2,
-    WBI  = speclib$WBI
-  ) %>%
-  relocate(ARI1, ARI2, .after = 11) %>%
-  relocate(WBI, .after = last_col())
-
-#----------
+VIs_df <- readRDS(paste0("./R_outputs/speclib_chronologies/veg_indices/chronologies_VIs_", NM, ".rds"))
 
 # ---------CALCULATE SD, MEAN, AND QUANTILES FOR VEGETATION INDICES W/ ARIs ------------------
 

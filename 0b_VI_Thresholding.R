@@ -88,7 +88,7 @@ if (length(files) == 0) stop("No .dat files found in: ", dir_envi)
 
 # Inspect xth file interactively
 test_filter_file(
-  file      = files[3],
+  file      = files[8],
   index     = Vindex,
   threshold = threshvalue,
   threshmin = threshmin,

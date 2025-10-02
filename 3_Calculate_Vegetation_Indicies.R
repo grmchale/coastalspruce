@@ -13,14 +13,13 @@ library(torch)
 source("./Functions/spectral_operations.R")
 
 #Resampled vegetation indices nm spacing (1,5,10,15)
-NM <- "1nm"
+NM <- "15nm"
 
 #RDS file for using when returning to code
-speclib<-readRDS(paste0("./R_outputs/speclib_amoebas/dataframes/amoebas_speclib_", NM, ".rds"))
-speclib<-Canopy_image_spectra_df
+#speclib<-readRDS(paste0("./R_outputs/speclib_chronologies/dataframes/chronologies_speclib_", NM, ".rds"))
+speclib_df<-Canopy_image_spectra_15nm_df
 
 #Cast the spectral library to a data frame
-speclib_df<- speclib
 #speclib_df<- speclib_df %>% select(-c(3:10)) #remove other attributes besides wavelengths
 
 #Check unique entries
@@ -28,15 +27,13 @@ speclib_df %>% group_by(Sample) %>% tally() %>%
   filter(n>1) #%>% ungroup() %>% select(Flight, Field, Plot) %>% unique %>% print(n=200)
 getAnywhere("get_required_veg_indices")
 
-###################### OPTIONAL: FILTER OUT BRIGHTEST PIXELS #######################################
-
 ############ CALCULATE VEGETATION INDICIES FOR LOADED IN SPECTRAL LIBRARY ##########
 
 #Calculate vegetation indices for the pixels
 VIs_df<-get_vegetation_indices(speclib_df, NULL)
 #VIs_df<-calc_veg_index(speclib_df, NA)
 
-# Create ARI1, ARI2, and WBI (DEPRECIATED)
+# Create ARI1, ARI2, and WBI
 if (NM == "1nm") {
   speclib_df <- speclib_df %>%
     mutate(
@@ -47,9 +44,9 @@ if (NM == "1nm") {
 } else if (NM == "15nm") {
   speclib_df <- speclib_df %>%
     mutate(
-      ARI1 = (1 / `X548`) - (1 / `X698`),
-      ARI2 = `X803` * ((1 / `X548`) - (1 / `X698`)),  # Explicitly use X803 for 15nm
-      WBI  = (`X968` / `X893`)                         # Use X893 for 15nm
+      ARI1 = (1 / `548`) - (1 / `698`),
+      ARI2 = `803` * ((1 / `548`) - (1 / `698`)),  # Explicitly use X803 for 15nm
+      WBI  = (`968` / `893`)                         # Use X893 for 15nm
     )
 } else {
   speclib_df <- speclib_df %>%
@@ -73,11 +70,11 @@ VIs_df <- VIs_df %>%
 VIs_df<-cbind(as.data.frame(speclib_df)[,1:2],VIs_df) 
 
 ############ CALCULATE MEDIAN VI VALUE FOR EACH TREEID ###########################
+library(dplyr)
 ##Create median VI value per TreeID
 median_VIs <- VIs_df %>%
-  #select(-106) %>%
-  group_by(TreeID) %>%
-  summarise(across(10:104, ~ median(.x, na.rm = TRUE)))
+  group_by(Sample) %>%
+  summarise(across(ARI1:WBI, ~ median(.x, na.rm = TRUE)), .groups = "drop")
 # Extract a unique row per TreeID from the original dataframe
 plot_info <- VIs_df %>%
   select(TreeID, sample_name, Site, Species, X, Y, CC, Dndrmtr, DBH, Tag) %>%
@@ -93,17 +90,35 @@ median_VIs_final <- median_VIs %>%
     #ARI2 = `800` * ((1 / `550`) - (1 / `700`))
  # )
 #Use this one for 5nm, 10m, and 15nm:
-speclib_bytreeid <- readRDS("./R_outputs/speclib_dendrometers/dataframes/dendrometer_canopy_bytreeid_15nm.rds") %>%
-  mutate(
-    ARI1 = (1 / `548`) - (1 / `698`),
-    ARI2 = `803` * ((1 / `548`) - (1 / `698`)) #Use '798' for 5nm and 10nm
-  )
+#speclib_bytreeid <- readRDS("./R_outputs/speclib_dendrometers/dataframes/dendrometer_canopy_bytreeid_15nm.rds") %>%
+#  mutate(
+#    ARI1 = (1 / `548`) - (1 / `698`),
+#    ARI2 = `803` * ((1 / `548`) - (1 / `698`)) #Use '798' for 5nm and 10nm
+#  )
 # Join ARI1 and ARI2 from speclib_bytreeid into median_VIs_final (keyed by TreeID)
 median_VIs_final <- median_VIs_final %>%
   left_join(speclib_bytreeid %>% select(TreeID, ARI1, ARI2), by = "TreeID") %>%
   # Move ARI1 and ARI2 to immediately after column 10
   select(1:10, ARI1, ARI2, everything())
 
-#Export VIs to .csv
-write.csv(VIs_df,"./R_outputs/speclib_amoebas/veg_indices/amoeba_VIs_1nm.csv")
-write.csv(median_VIs_final,"./R_outputs/speclib_dendrometers/veg_indices/dendrometer_VIs_15nm_bytreeid.csv")
+# CSVs
+write.csv(
+  VIs_df,
+  paste0("./R_outputs/speclib_chronologies/veg_indices/chronologies_VIs_", NM, ".csv"),
+  row.names = FALSE
+)
+write.csv(
+  median_VIs,
+  paste0("./R_outputs/speclib_chronologies/veg_indices/chronologies_VIs_", NM, "_bytreeid.csv"),
+  row.names = FALSE
+)
+# RDS
+saveRDS(
+  VIs_df,
+  paste0("./R_outputs/speclib_chronologies/veg_indices/chronologies_VIs_", NM, ".rds")
+)
+saveRDS(
+  median_VIs,
+  paste0("./R_outputs/speclib_chronologies/veg_indices/chronologies_VIs_", NM, "_bytreeid.rds")
+)
+

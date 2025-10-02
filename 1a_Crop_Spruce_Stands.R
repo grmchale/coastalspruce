@@ -1,8 +1,8 @@
 #This script crops and masks an image by a shapefile. The output is a raster of each tree canopy for that image.
-
+#setwd()
 source("Functions/lecospectR.R")
 
-#Load in packages
+# Load packages
 library(spectrolab)
 library(terra)
 library(raster)
@@ -12,86 +12,198 @@ library(rgeos)
 library(sf)
 library(doFuture)
 
+############################# CHRONOLOGY WORKFLOW PREP ########################################
+suppressPackageStartupMessages({
+  library(terra)
+})
+
+polygon_shapefile <- "G:/HyperspectralUAV/Hyperspectral_Vectors/chronology_crowns/Chronology_Crowns1.shp"
+out_dir           <- "G:/LiD-Hyp/chronology_shapefiles_split"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+polys <- terra::vect(polygon_shapefile)
+fld   <- "HypCLIP"
+stopifnot(fld %in% names(polys))
+
+# Get attribute values as text (avoid factor/integer codes)
+# Just the attribute table (no geometry)
+attrs <- as.data.frame(polys)
+vals_raw <- as.character(attrs[[fld]])
+
+# ---- build grouping key (plain ASCII only) ----
+strip_dat   <- function(x) tools::file_path_sans_ext(x)
+sanitize_fn <- function(x) {
+  x <- trimws(x)
+  x <- gsub("[^A-Za-z0-9_\\-]+", "_", x)
+  x <- sub("^_+", "", x)
+  substr(x, 1, 200)
+}
+
+keys <- sanitize_fn(strip_dat(vals_raw))
+
+# Attach normalized key with a simple name to avoid parser quirks
+polys$split_key <- keys
+
+# Unique groups (exclude NA/empty)
+groups <- sort(unique(keys[!is.na(keys) & nzchar(keys)]))
+if (!length(groups)) stop("No non-empty HypCLIP groups found.")
+
+cat("Found ", length(groups), " unique HypCLIP groups.\n", sep = "")
+
+# ---- write one shapefile per group ----
+counts <- integer(length(groups))
+names(counts) <- groups
+
+for (g in groups) {
+  sel <- polys[polys[["split_key"]] == g, ]   # preserves ALL attributes
+  counts[g] <- nrow(sel)
+  
+  out_shp <- file.path(out_dir, paste0(g, "_shapefile.shp"))
+  
+  terra::writeVector(sel, out_shp, filetype = "ESRI Shapefile", overwrite = TRUE)
+  
+  cat(sprintf("Wrote %-40s (%3d features)\n", basename(out_shp), nrow(sel)))
+}
+
+cat("\nSummary (features per output):\n")
+print(sort(counts, decreasing = TRUE))
+cat("\nDone. Shapefiles written to:\n", out_dir, "\n")
+
+
 ###########################################################################################################
 ########################### CROP SPRUCE CANOPIES (CHRONOLOGY WORKFLOW) ####################################
 
 # =========================
-# USER-DEFINED PATHS & SETTINGS
+# PACKAGES
 # =========================
-filtered_img_dir <- "G:/LiD-Hyp/_filtered_hyp_EVI02"
-polygon_shapefile <- "G:/HyperspectralUAV/Hyperspectral_Vectors/chronology_crowns/Chronology_Crowns1.shp"
-polygon_id_field <- "HypCLIP"
-output_dir <- "./R_outputs/canopy_spectra_chronologies/"
-n_preview <- 5  # Number of previews before batch processing
-
-# =========================
-# LOAD FILES
-# =========================
-# List of available .dat raster files
-raster_files <- list.files(filtered_img_dir, pattern = "\\.dat$", full.names = TRUE)
-raster_names <- tools::file_path_sans_ext(basename(raster_files))
-
-# Load the full canopy shapefile (multiple polygons)
-canopies <- terra::vect(polygon_shapefile)
-
-# =========================
-# FILTER POLYGONS TO THOSE MATCHING AVAILABLE RASTERS
-# =========================
-canopies$HypCLIP_base <- tools::file_path_sans_ext(basename(canopies[[polygon_id_field]]))
-valid_polygons <- canopies[canopies$HypCLIP_base %in% raster_names, ]
-split_polys <- split(valid_polygons, valid_polygons$HypCLIP_base)
-
-cat("Number of raster files with matching polygons:", length(split_polys), "\n")
-
-# =========================
-# PREVIEW FIRST n_preview CROPPED POLYGONS
-# =========================
-preview_names <- names(split_polys)[1:min(n_preview, length(split_polys))]
-
-for (name in preview_names) {
-  raster_path <- file.path(filtered_img_dir, paste0(name, ".dat"))
-  r <- terra::rast(raster_path)
-  polys <- split_polys[[name]]
-  for (i in 1:length(polys)) {
-    crop_i <- terra::crop(r, polys[i])
-    mask_i <- terra::mask(crop_i, polys[i])
-    plotRGB(mask_i, r = 133, g = 84, b = 41, stretch = "lin", main = paste(name, "-", i))
-    Sys.sleep(1)  # Pause briefly between previews
-  }
-}
-
-# Ask user whether to continue
-cat("\nPreview complete. Proceed with batch processing? [y/n]: ")
-response <- tolower(scan(what = character(), nmax = 1, quiet = TRUE))
-if (response != "y") {
-  stop("Batch processing aborted by user.")
-}
-
-# =========================
-# MAIN CROPPING LOOP
-# =========================
-lapply(names(split_polys), function(name) {
-  raster_path <- file.path(filtered_img_dir, paste0(name, ".dat"))
-  r <- terra::rast(raster_path)
-  original_names <- names(r)
-  polys <- split_polys[[name]]
-  
-  lapply(1:length(polys), function(i) {
-    clipped <- terra::mask(terra::crop(r, polys[i]), polys[i])
-    bandnames(clipped) <- original_names
-    
-    # Get TreeID and sanitize
-    tree_id <- as.character(polys[i][["TreeID"]])
-    tree_id <- gsub("[^A-Za-z0-9_\\-]", "_", tree_id)
-    out_name <- file.path(output_dir, paste0(tree_id, ".dat"))
-    
-    writeRaster(clipped, out_name, overwrite = TRUE, filetype = "ENVI")
-    rm(clipped)
-  })
-  
-  rm(r)
-  gc()
+suppressPackageStartupMessages({
+  library(terra)   # rast(), vect(), crop(), mask(), writeRaster(), writeVector()
 })
+
+# =========================
+# USER PATHS
+# =========================
+shp_dir         <- "G:/LiD-Hyp/chronology_shapefiles_split"
+raster_dir      <- "G:/LiD-Hyp/_filtered_hyp_EVI02"
+out_dir         <- "./R_outputs/canopy_spectra_chronologies/"
+
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# =========================
+# HELPERS
+# =========================
+# derive base key from a split shapefile name, e.g. "CC_North_shapefile.shp" -> "CC_North"
+key_from_shp <- function(shp_path) {
+  base <- tools::file_path_sans_ext(basename(shp_path))
+  sub("_shapefile$", "", base, perl = TRUE)
+}
+
+# make safe filenames from TreeID
+safe_name <- function(x) {
+  x <- as.character(x)
+  x <- trimws(x)
+  x <- gsub("[^A-Za-z0-9_\\-\\.]+", "_", x)  # keep letters/digits/_/-/. (allow dots in TreeID)
+  x <- sub("^_+", "", x)
+  substr(x, 1, 200)                           # conservative for Windows
+}
+
+# =========================
+# LIST INPUTS
+# =========================
+# all split shapefiles
+shps <- list.files(shp_dir, pattern = "\\.shp$", full.names = TRUE)
+if (!length(shps)) stop("No .shp files found in: ", shp_dir)
+
+# all available .dat rasters (ENVI)
+dat_paths <- list.files(raster_dir, pattern = "\\.dat$", ignore.case = TRUE, full.names = TRUE)
+if (!length(dat_paths)) stop("No .dat rasters found in: ", raster_dir)
+
+dat_keys <- tools::file_path_sans_ext(basename(dat_paths))
+# map normalized keys to raster paths
+raster_map <- stats::setNames(dat_paths, dat_keys)
+
+# =========================
+# MAIN LOOP
+# =========================
+total_written <- 0L
+
+for (shp in shps) {
+  key <- key_from_shp(shp)                  # e.g., "CC_North"
+  if (!(key %in% names(raster_map))) {
+    message("Skipping: no matching .dat for shapefile key '", key, "'")
+    next
+  }
+  
+  # read raster and polygons
+  r_path <- raster_map[[key]]
+  r <- try(terra::rast(r_path), silent = TRUE)
+  if (inherits(r, "try-error")) {
+    warning("Failed to read raster: ", r_path)
+    next
+  }
+  poly <- try(terra::vect(shp), silent = TRUE)
+  if (inherits(poly, "try-error")) {
+    warning("Failed to read shapefile: ", shp)
+    next
+  }
+  
+  # ensure CRS alignment (reproject polygons if needed)
+  if (!is.null(crs(r)) && !is.null(crs(poly)) && !terra::same.crs(r, poly)) {
+    poly <- terra::project(poly, r)
+  }
+  
+  lyr_names <- names(r)   # keep original band names
+  
+  # QC: need TreeID field
+  if (!("TreeID" %in% names(poly))) {
+    warning("Shapefile lacks 'TreeID' field: ", basename(shp), " — skipping.")
+    next
+  }
+  
+  nfeat <- nrow(poly)
+  cat(sprintf("Processing %-30s  ->  %s  (%d polygons)\n",
+              basename(shp), basename(r_path), nfeat))
+  
+  # iterate polygons
+  for (i in seq_len(nfeat)) {
+    tree_id_raw <- poly[i, ][["TreeID"]]
+    tree_id     <- safe_name(tree_id_raw)
+    if (!nzchar(tree_id) || is.na(tree_id)) tree_id <- sprintf("%s_poly%03d", key, i)
+    
+    out_path <- file.path(out_dir, paste0(tree_id, ".dat"))
+    # avoid accidental overwrite if duplicate TreeIDs
+    if (file.exists(out_path)) {
+      out_path <- file.path(out_dir, paste0(tree_id, "_", i, ".dat"))
+    }
+    
+    # crop + mask
+    # (crop first for speed, then mask to polygon boundary)
+    clipped <- try({
+      r_crop <- terra::crop(r, poly[i, ])
+      terra::mask(r_crop, poly[i, ])
+    }, silent = TRUE)
+    
+    if (inherits(clipped, "try-error")) {
+      warning("Clip failed for TreeID=", tree_id, " (", basename(shp), " idx=", i, ")")
+      next
+    }
+    
+    # restore band names
+    names(clipped) <- lyr_names
+    
+    # write ENVI .dat + .hdr
+    terra::writeRaster(clipped, out_path, overwrite = TRUE, filetype = "ENVI")
+    total_written <- total_written + 1L
+    
+    # tidy
+    rm(clipped); gc(verbose = FALSE)
+  }
+  
+  rm(r, poly); gc(verbose = FALSE)
+}
+
+cat("\nDone. Wrote ", total_written, " clipped rasters to:\n", normalizePath(out_dir), "\n", sep = "")
+
 
 ###########################################################################################################
 ########################### CROP SPRUCE CANOPIES (DENDROMETER WORKFLOW) ###################################

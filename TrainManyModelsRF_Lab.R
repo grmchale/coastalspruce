@@ -1,4 +1,5 @@
 #source("Functions/lecospectR.R")
+#setwd("G:/HyperspectralUAV")
 library(tidyverse)
 library(ranger)
 library(caret)
@@ -26,6 +27,7 @@ drone_dendro<-read.csv("G:/Dendrometers/drone_dendro.csv")
 cumulative_zg<-read.csv("G:/Dendrometers/cumulative_zg.csv")
 uptoflight_zg<-read.csv("G:/Dendrometers/cumulative_zg_uptoflight.csv")
 uptoflight_intervals_zg<-read.csv("G:/Dendrometers/uptoflight_intervals_zg.csv")
+dendro_metrics<-read.csv("G:/Dendrometers/dendro_metrics.csv")
 
 # ------------------------------------------------------------------------------------------------
 
@@ -56,12 +58,14 @@ df_rf <- speclib_rf %>%
 df_rf <- canopy_VI_stats %>%
   inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
   drop_na(!!sym(dvarb)) %>%
+  
 #Joined dvarb, VI stats (SD, Mean, Median, Quantiles) for 1,5,10,15 nm resamples + spectral library (at 1,5,10,15nm)
 df_rf <- VIstats_speclib %>%
   inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
   drop_na(!!sym(dvarb)) %>%
   select(-X) %>%  # Remove the column named "X" if it exists
   rename_with(~ gsub("^X", "", .), starts_with("X"))  # Remove "X" prefix from column names
+
 #Joined dvarb and LiDAR metrics
 df_rf <- LiDAR_metrics %>% 
   inner_join(get(df_dep) %>% select(TreeID, !!dvarb), by = "TreeID") %>%
