@@ -2,8 +2,8 @@
 library(terra)
 
 # Define input and output directories
-input_dir <- "G:/LiD-Hyp/hyp_files"
-output_dir <- "G:/LiD-Hyp/_aggregated_hyp"
+input_dir <- "./R_outputs/canopy_spectra_amoebas"
+output_dir <- "G:/LiD-Hyp/_aggregated_hyp_1m"
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 # List all .dat files

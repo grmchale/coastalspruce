@@ -5,7 +5,7 @@ library(terra)
 # --- Customize inputs here ---
 # Index and threshold settings
 Vindex <- "EVI"       # Options: "FCI1", "EVI", "VIAVG", "MSR705", "NDVI"
-threshvalue <- 0.2    # For NDVI, EVI, VIAVG
+threshvalue <- 0.3    # For NDVI, EVI, VIAVG
 threshmin   <- 3      # For MSR705
 threshmax   <- 8      # For MSR705
 
@@ -22,9 +22,9 @@ bands <- list(
 )
 
 # File paths
-dir_envi     <- "G:/LiD-Hyp/hyp_files"
-out_mask_dir <- "G:/LiD-Hyp/vi_masks/EVI02"
-out_hyp_dir  <- "G:/LiD-Hyp/_filtered_hyp_EVI02"
+dir_envi     <- "G:/LiD-Hyp/_aggregated_hyp_1m"
+out_mask_dir <- "G:/LiD-Hyp/vi_masks/amoeba_masks"
+out_hyp_dir  <- "G:/LiD-Hyp/_filtered_hyp_amoebas"
 
 # --- Ensure output directories exist ---
 dir.create(out_mask_dir, recursive = TRUE, showWarnings = FALSE)
@@ -88,7 +88,7 @@ if (length(files) == 0) stop("No .dat files found in: ", dir_envi)
 
 # Inspect xth file interactively
 test_filter_file(
-  file      = files[8],
+  file      = files[4],
   index     = Vindex,
   threshold = threshvalue,
   threshmin = threshmin,
@@ -114,7 +114,7 @@ library(terra)
 
 # --- Display function for filtered hyperspectral images in true color ---
 display_filtered_images <- function(
-    directory = "G:/LiD-Hyp/_filtered_hyp_EVI02",   # Folder with filtered .dat files
+    directory = "G:/LiD-Hyp/_filtered_hyp_amoebas",   # Folder with filtered .dat files
     red_band = 133, green_band = 84, blue_band = 41,  # True color bands
     max_images = 9, rows = 3, cols = 3,
     stretch = TRUE
@@ -156,7 +156,7 @@ display_filtered_images <- function(
 
 # Run the function and display the images
 display_filtered_images(
-  directory = "G:/LiD-Hyp/_filtered_hyp_EVI02",
+  directory = "G:/LiD-Hyp/_filtered_hyp_amoebas",
   red_band = 133,
   green_band = 84,
   blue_band = 41,

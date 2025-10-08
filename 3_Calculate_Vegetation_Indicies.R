@@ -67,7 +67,7 @@ VIs_df <- VIs_df %>%
   relocate(ARI1, ARI2, .before = 1) %>%
   relocate(WBI, .after = last_col())
 #Adds categorical variables back in
-VIs_df<-cbind(as.data.frame(speclib_df)[,1:2],VIs_df) 
+VIs_df<-cbind(as.data.frame(speclib_df)[,1:3],VIs_df) 
 
 ############ CALCULATE MEDIAN VI VALUE FOR EACH TREEID ###########################
 library(dplyr)
@@ -104,7 +104,7 @@ median_VIs_final <- median_VIs_final %>%
 # CSVs
 write.csv(
   VIs_df,
-  paste0("./R_outputs/speclib_chronologies/veg_indices/chronologies_VIs_", NM, ".csv"),
+  paste0("./R_outputs/speclib_amoebas_final/veg_indices/amoebas_VIs_", NM, ".csv"),
   row.names = FALSE
 )
 write.csv(
@@ -115,7 +115,7 @@ write.csv(
 # RDS
 saveRDS(
   VIs_df,
-  paste0("./R_outputs/speclib_chronologies/veg_indices/chronologies_VIs_", NM, ".rds")
+  paste0("./R_outputs/speclib_amoebas_final/veg_indices/amoebas_VIs_", NM, ".rds")
 )
 saveRDS(
   median_VIs,

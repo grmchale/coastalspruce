@@ -1760,30 +1760,74 @@ write.csv(vi_loadings,
           file.path(out_dir, "vi_pca_loadings.csv"),
           row.names = FALSE)
 
-##### PCA on vegetation indices ARI1 through WBI - using princomp() #######
+##### PCA on vegetation indices ARI1 through WBI - using prcomp() #######
 suppressPackageStartupMessages({
   library(dplyr)
-  library(tidyr)
-  library(vegan)
+  library(tibble)
   library(ggplot2)
+  library(ggrepel)   # for nice non-overlapping labels
 })
 
-# --- 1) PCA on vegetation indices (scaled) using prcomp ---
+# --- 1) PCA on vegetation indices (scaled) ---
 X <- chrono_multi_speclib %>% select(ARI1_1nm_Median:WBI_15nm_Median)
 pca_vi <- prcomp(X, scale. = TRUE, center = TRUE)
 
-# Variance explained (first 10 PCs)
+# Variance explained
 var_explained <- (pca_vi$sdev^2) / sum(pca_vi$sdev^2)
 print(var_explained[1:10])
 
-# --- 2) Loadings for PC1 & PC2 (indices) ---
-vi_loadings <- as.data.frame(pca_vi$rotation[, 1:2]) %>%
-  rownames_to_column("Index") %>%
+# --- 2) Site scores (crowns in PCA space) ---
+scores_df <- as.data.frame(pca_vi$x[, 1:2]) %>%
+  mutate(TreeID = chrono_multi_speclib$TreeID,
+         Site   = chrono_multi_speclib$Site)
+
+# axis labels with % variance
+xlab_txt <- sprintf("PC1 (%.1f%%)", 100 * var_explained[1])
+ylab_txt <- sprintf("PC2 (%.1f%%)", 100 * var_explained[2])
+
+# --- 3) Compute "envfit-like" arrows manually ---
+Y <- chrono_multi_speclib %>%
+  mutate(across(c(DBH, rugosity, Area_m2, zq95, Lat, Long), as.numeric)) %>%
+  select(DBH, rugosity, Area_m2, zq95, Lat, Long)
+
+# correlation of each variable with PC1 and PC2
+arrow_mat <- apply(Y, 2, function(y) cor(y, scores_df[, c("PC1","PC2")],
+                                         use = "pairwise.complete.obs"))
+# arrow_mat is 2 x variables (rows = PCs, cols = variables)
+arrows_df <- as.data.frame(t(arrow_mat)) %>%
+  rownames_to_column("Variable") %>%
   rename(PC1 = PC1, PC2 = PC2)
 
-# tidy for plotting top contributors
+# scale arrows for plotting (so they fit nicely)
+mult <- min(
+  (max(scores_df$PC1) - min(scores_df$PC1)) / (max(arrows_df$PC1) - min(arrows_df$PC1)),
+  (max(scores_df$PC2) - min(scores_df$PC2)) / (max(arrows_df$PC2) - min(arrows_df$PC2))
+) * 0.7
+arrows_df <- arrows_df %>%
+  mutate(PC1 = PC1 * mult,
+         PC2 = PC2 * mult)
+
+# --- 4) PCA biplot with ggplot2 ---
+ggplot(scores_df, aes(x = PC1, y = PC2, color = Site)) +
+  geom_point(size = 2, alpha = 0.8) +
+  # add arrows
+  geom_segment(data = arrows_df,
+               aes(x = 0, y = 0, xend = PC1, yend = PC2),
+               arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+  geom_text_repel(data = arrows_df,
+                  aes(x = PC1, y = PC2, label = Variable),
+                  size = 3.5, color = "black") +
+  labs(title = "PCA of Vegetation Indices (prcomp) with Structural Overlays",
+       x = xlab_txt, y = ylab_txt) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "right")
+
+# --- 5) Loadings (top 20 by abs value for PC1/PC2) ---
+vi_loadings <- as.data.frame(pca_vi$rotation[, 1:2]) %>%
+  rownames_to_column("Index")
+
 vi_long <- vi_loadings %>%
-  pivot_longer(cols = c(PC1, PC2), names_to = "PC", values_to = "Loading") %>%
+  tidyr::pivot_longer(cols = c(PC1, PC2), names_to = "PC", values_to = "Loading") %>%
   group_by(PC) %>%
   slice_max(order_by = abs(Loading), n = 20) %>%
   ungroup() %>%
@@ -1792,51 +1836,11 @@ vi_long <- vi_loadings %>%
 ggplot(vi_long, aes(x = Loading, y = reorder(Index, Loading), color = PC)) +
   geom_point() +
   facet_wrap(~ PC, scales = "free_y") +
-  labs(title = "Top index loadings for PC1 and PC2",
+  labs(title = "Top vegetation index loadings for PC1 and PC2",
        x = "Loading (eigenvector coefficient)", y = NULL) +
   scale_color_manual(values = c("PC1" = "blue", "PC2" = "red"), name = NULL) +
   theme_minimal(base_size = 12)
 
-# --- 3) envfit with structure & coordinates ---
-Y <- chrono_multi_speclib %>%
-  mutate(across(c(DBH, rugosity, Area_m2, zq95), as.numeric)) %>% # Lat, Long), as.numeric)) %>%
-  select(DBH, rugosity, Area_m2, zq95) #Lat, Long)
-
-# envfit requires a vegan-style ordination
-# wrap PCA scores into an ordiplot object
-pca_sites <- pca_vi$x[, 1:2]   # first 2 PCs
-colnames(pca_sites) <- c("PC1", "PC2")
-ord <- vegan::ordiplot(pca_sites, choices = c(1, 2), plot = FALSE)
-
-set.seed(1)
-fit_vi <- envfit(ord, Y, permutations = 999)
-
-# --- 4) PCA plot: crowns colored by Site + envfit arrows ---
-site_fac <- factor(chrono_multi_speclib$Site)
-
-plot(ord, type = "n",
-     main = "PCA of Vegetation Indices with Variable Overlays (prcomp)")
-points(ord, col = site_fac, pch = 19, cex = 1.2)
-legend("topright", legend = levels(site_fac),
-       col = seq_along(levels(site_fac)), pch = 19, cex = 1.2, bty = "n")
-
-plot(fit_vi, col = "red", p.max = 1)      # all
-plot(fit_vi, col = "black", p.max = 0.05) # sig only
-
-# --- 5) Tidy envfit results table ---
-envfit_df <- as.data.frame(fit_vi$vectors$arrows * sqrt(fit_vi$vectors$r))
-envfit_df$Variable <- rownames(envfit_df)
-envfit_df$r2   <- fit_vi$vectors$r
-envfit_df$pval <- fit_vi$vectors$pvals
-envfit_df <- envfit_df %>% select(Variable, PC1 = V1, PC2 = V2, r2, pval)
-
-# also keep simple stats table
-envfit_stats <- data.frame(
-  Variable = rownames(fit_vi$vectors$arrows),
-  r2   = fit_vi$vectors$r,
-  pval = fit_vi$vectors$pvals,
-  stringsAsFactors = FALSE
-)
 
 #### PCA without highly correlated indices (test) ######
 library(caret)   # for findCorrelation()
@@ -1938,3 +1942,271 @@ envfit_df_pruned$pval <- fit_vi_pruned$vectors$pvals
 envfit_df_pruned <- envfit_df_pruned %>% select(Variable, PC1 = V1, PC2 = V2, r2, pval)
 
 envfit_df_pruned
+
+
+########### perMANOVA TOWN POPULATION: GREG ###############
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(vegan)
+  library(tibble)
+})
+
+##### Spectral and indices permanovas #########
+set.seed(1)
+perms <- 999  # increase for final results if desired
+
+# 1) perMANOVA — ALL BANDS (398–850)
+X_bands <- chrono_multi_speclib %>% select(`398`:`850`)
+stopifnot(nrow(X_bands) == nrow(chrono_multi_speclib))
+
+adon_bands <- adonis2(X_bands ~ Site,
+                      data = chrono_multi_speclib,
+                      method = "euclidean",
+                      permutations = perms)
+
+# Tidy result as a data frame (label it clearly)
+permanova_bands_df <- as.data.frame(adon_bands)
+permanova_bands_df <- permanova_bands_df %>%
+  rownames_to_column("Term") %>%
+  mutate(Test = "Bands_398_850",
+         Method = "euclidean",
+         Permutations = perms,
+         N = nrow(chrono_multi_speclib))
+
+permanova_bands_df
+
+# 2) perMANOVA — SELECTED INDICES
+desired_vi <- c(
+  "PRI_15nm_Median",
+  "REPLE_5nm_Median",
+  "NDVI_5nm_Median",
+  "Vogelmann3_5nm_Median",
+  "PRInorm_5nm_Median",
+  "Datt3_5nm_Median"
+)
+
+present_vi <- intersect(desired_vi, names(chrono_multi_speclib))
+if (length(present_vi) < 2) stop("Fewer than 2 requested indices are present; update 'desired_vi'.")
+
+X_vi <- chrono_multi_speclib %>% select(all_of(present_vi))
+
+adon_vi <- adonis2(X_vi ~ Site,
+                   data = chrono_multi_speclib,
+                   method = "euclidean",
+                   permutations = perms)
+
+permanova_vi_df <- as.data.frame(adon_vi) %>%
+  rownames_to_column("Term") %>%
+  mutate(Test = paste0("Selected_VIs (", paste(present_vi, collapse = ", "), ")"),
+         Method = "euclidean",
+         Permutations = perms,
+         N = nrow(chrono_multi_speclib))
+
+permanova_vi_df
+
+# (Optional) Dispersion check (run separately if/when you want)
+bd_bands <- betadisper(dist(X_bands), chrono_multi_speclib$Site); anova(bd_bands)
+bd_vi    <- betadisper(dist(X_vi),    chrono_multi_speclib$Site); anova(bd_vi)
+
+###### pairwise perMANOVA #####
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(vegan)
+  library(tibble)
+})
+
+# Data: 6 VIs
+X_vi <- chrono_multi_speclib %>%
+  select(PRI_15nm_Median, REPLE_5nm_Median,
+         NDVI_5nm_Median, Vogelmann3_5nm_Median,
+         PRInorm_5nm_Median, Datt3_5nm_Median)
+
+Site <- factor(chrono_multi_speclib$Site)
+levs <- levels(Site)
+
+# Robust extractor: grab the first model term row (not Residual/Total)
+.extract_stats <- function(ad) {
+  df <- as.data.frame(ad) %>% rownames_to_column("Term")
+  row_idx <- which(!df$Term %in% c("Residual", "Total"))[1]
+  if (is.na(row_idx)) {
+    return(data.frame(SumOfSqs = NA, R2 = NA, F = NA, p = NA))
+  }
+  out <- df[row_idx, c("SumOfSqs", "R2", "F", "Pr(>F)")]
+  names(out) <- c("SumOfSqs", "R2", "F", "p")
+  out
+}
+
+pairs <- combn(levs, 2, simplify = FALSE)
+
+res_list <- lapply(pairs, function(pr) {
+  idx <- Site %in% pr
+  dat_sub <- data.frame(Site = droplevels(Site[idx]))
+  # require at least 2 crowns per site for a stable test
+  if (any(table(dat_sub$Site) < 2)) return(NULL)
+  
+  X_sub <- X_vi[idx, , drop = FALSE]
+  
+  # try adonis2; if it fails, skip this pair gracefully
+  ad <- try(
+    adonis2(X_sub ~ Site, data = dat_sub,
+            method = "euclidean", permutations = 999),
+    silent = TRUE
+  )
+  if (inherits(ad, "try-error")) return(NULL)
+  
+  out <- .extract_stats(ad)
+  out$SiteA <- pr[1]
+  out$SiteB <- pr[2]
+  out$N     <- nrow(dat_sub)
+  
+  out
+})
+
+pairwise_vi_df <- bind_rows(res_list) %>%
+  relocate(SiteA, SiteB, N) %>%
+  mutate(p_adj_bonf = p.adjust(p, method = "bonferroni"),
+         p_adj_fdr  = p.adjust(p, method = "fdr")) %>%
+  arrange(p_adj_fdr)
+
+pairwise_vi_df
+
+# Export both tables
+out_dir <- "G:/HyperspectralUAV/R_outputs/permanova"  # change if needed
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+write.csv(permanova_bands_df,
+          file.path(out_dir, "permanova_bands_398_850.csv"),
+          row.names = FALSE)
+
+write.csv(permanova_vi_df,
+          file.path(out_dir, "permanova_selected_VIs.csv"),
+          row.names = FALSE)
+
+#### Testing phenology ####
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(vegan)
+  library(tibble)
+})
+
+set.seed(1)
+perms <- 999
+out_dir <- "G:/HyperspectralUAV/R_outputs/modelling/perMANOVA/chronologies_pm"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+# --- 0. Data: select 6 vegetation indices ---
+X_vi <- chrono_multi_speclib %>%
+  select(PRI_15nm_Median, REPLE_5nm_Median,
+         NDVI_5nm_Median, Vogelmann3_5nm_Median,
+         PRInorm_5nm_Median, Datt3_5nm_Median)
+
+# Add phenology group factor
+early_sites <- c("GI","CE","HI","CC","ET")
+late_sites  <- c("FP","WP","GW","RI")
+
+df <- chrono_multi_speclib %>%
+  mutate(PhenologyGroup = ifelse(Site %in% early_sites, "Early", "Late")) %>%
+  mutate(PhenologyGroup = factor(PhenologyGroup, levels = c("Early","Late")))
+
+# 1) Early sites only
+df_early <- df %>% filter(Site %in% early_sites)
+X_early <- X_vi[df$Site %in% early_sites, ]
+
+adon_early <- adonis2(X_early ~ Site, data = df_early,
+                      method = "euclidean", permutations = perms)
+
+permanova_early_df <- as.data.frame(adon_early) %>%
+  rownames_to_column("Term") %>%
+  mutate(Test = "Early Sites (GI, CE, HI, CC, ET)",
+         N = nrow(df_early))
+
+write.csv(permanova_early_df,
+          file.path(out_dir, "permanova_early_sites.csv"),
+          row.names = FALSE)
+
+# 2) Late sites only
+df_late <- df %>% filter(Site %in% late_sites)
+X_late <- X_vi[df$Site %in% late_sites, ]
+
+adon_late <- adonis2(X_late ~ Site, data = df_late,
+                     method = "euclidean", permutations = perms)
+
+permanova_late_df <- as.data.frame(adon_late) %>%
+  rownames_to_column("Term") %>%
+  mutate(Test = "Late Sites (FP, WP, GW, RI)",
+         N = nrow(df_late))
+
+write.csv(permanova_late_df,
+          file.path(out_dir, "permanova_late_sites.csv"),
+          row.names = FALSE)
+
+# 3) Full model: Phenology + Site
+adon_full <- adonis2(X_vi ~ PhenologyGroup + Site, data = df,
+                     method = "euclidean", permutations = perms)
+
+permanova_full_df <- as.data.frame(adon_full) %>%
+  rownames_to_column("Term") %>%
+  mutate(Test = "Full Model: PhenologyGroup + Site",
+         N = nrow(df))
+
+write.csv(permanova_full_df,
+          file.path(out_dir, "permanova_full_model.csv"),
+          row.names = FALSE)
+
+# Quick look in console
+permanova_early_df
+permanova_late_df
+permanova_full_df
+
+# Nested perMANOVA: phenology + sites within phenology
+adon_nested <- adonis2(X_vi ~ PhenologyGroup/Site, data = df,
+                       method = "euclidean", permutations = 999)
+
+permanova_nested_df <- as.data.frame(adon_nested) %>%
+  rownames_to_column("Term") %>%
+  mutate(Test = "Nested Model: PhenologyGroup/Site",
+         N = nrow(df))
+
+# Save results
+write.csv(permanova_nested_df,
+          file.path(out_dir, "permanova_nested_model.csv"),
+          row.names = FALSE)
+
+# Quick look
+permanova_nested_df
+
+#### Box plot ###
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+vi_col <- "Datt3_5nm_Median"   # change to any VI column
+plot_title <- "Distribution of Datt3 (5nm Median) by Site"  # customize here
+
+# enforce site order
+site_order <- c("GI","CE","HI","CC","ET","FP","WP","GW","RI")
+chrono_multi_speclib <- chrono_multi_speclib %>%
+  mutate(Site = factor(Site, levels = site_order))
+
+# auto-generate distinct colors
+n_sites <- length(site_order)
+site_cols <- hue_pal()(n_sites)
+
+ggplot(chrono_multi_speclib, aes(x = Site, y = .data[[vi_col]], fill = Site)) +
+  geom_boxplot(outlier.shape = NA, width = 0.7, alpha = 0.85) +
+  geom_jitter(aes(color = Site),
+              width = 0.15, alpha = 0.6, size = 1.5, show.legend = FALSE) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 3,
+               fill = "white", color = "black") +
+  labs(title = plot_title,
+       x = NULL, y = vi_col) +
+  scale_fill_manual(values = site_cols) +
+  scale_color_manual(values = site_cols) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+
+
+
+            

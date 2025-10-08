@@ -351,3 +351,134 @@ message(paste("Saved crown lat/lon to:", output_csv))
 
 # Unload sf package
 detach("package:sf", unload = TRUE)
+
+################# LiDAR METRICS FOR AMOEBAS ############################
+library(lidR)
+library(tools)
+library(dplyr)
+
+# Define paths
+las_dir <- "G:/LiDAR/Normalized/LiDAR_Amoebas"
+output_csv <- file.path(las_dir, "amoeba_metrics.csv")
+
+# List LAS files
+las_files <- list.files(las_dir, pattern = "\\.las$", full.names = TRUE)
+
+# Initialize results
+all_metrics <- data.frame()
+
+# Loop through each .las file
+for (las_path in las_files) {
+  amoeba_id <- file_path_sans_ext(basename(las_path))
+  
+  # Read LAS file
+  las <- readLAS(las_path)
+  if (is.empty(las)) {
+    warning(paste("LAS is empty for:", amoeba_id, "- Skipping."))
+    next
+  }
+  
+  # Compute standard metrics
+  metrics <- cloud_metrics(las, .stdmetrics_z)
+  metrics$ID <- amoeba_id
+  
+  # Combine into results table
+  all_metrics <- bind_rows(all_metrics, metrics)
+  
+  message(paste("Processed:", amoeba_id))
+}
+
+# Reorder columns: ID first
+all_metrics <- all_metrics %>%
+  select(ID, everything())
+
+# Write to CSV
+write.csv(all_metrics, output_csv, row.names = FALSE)
+message(paste("Saved amoeba metrics to:", output_csv))
+
+################# AMOEBA METRICS:LAT,LONG,ELV,ASPECT,SLOPE,AREA ##################
+library(sf)
+library(raster)
+library(dplyr)
+library(tools)
+
+# --- 1. Define input/output paths ---
+shapefile_path <- "G:/LiDAR/LiDAR_Shapefiles/Amoebas/lidar_amoebas.shp"
+dem_dir <- "G:/Misc/DEMs/ALL"
+output_csv <- "G:/LiDAR/Normalized/LiDAR_Amoebas/amoeba_latlon_topo.csv"
+
+# --- 2. Read shapefile ---
+amoebas <- st_read(shapefile_path)
+
+# --- 3. Calculate area in square meters ---
+amoebas$Area_m2 <- as.numeric(st_area(amoebas))  # Use original UTM CRS
+
+# --- 4. Calculate centroids and transform to WGS84 for lat/lon ---
+centroids <- st_centroid(amoebas)
+centroids_wgs <- st_transform(centroids, crs = 4326)
+coords <- st_coordinates(centroids_wgs)
+amoebas$Long <- coords[, 1]
+amoebas$Lat <- coords[, 2]
+
+# --- 5. Define DEM mapping to IDs ---
+dem_map <- list(
+  ET = "EdgarTennisDEM.tif",
+  FP = "ForbesPondDEM.tif",
+  GI = "GerrishIsland_DEM.tif",
+  GW = "GreatWassDEM.tif",
+  HI = "HogIslandDEM.tif",
+  RI = "RoqueIslandDEM.tif",
+  WP = "WillardPointDEM.tif",
+  CE = "CapeElizabethDEM.tif",
+  CC = "CrockettCoveDEM.tif",
+  BI = "CrockettCoveDEM.tif"
+)
+
+# --- 6. Initialize columns for elevation, slope, aspect ---
+amoebas$Elevation <- NA
+amoebas$Slope_deg <- NA
+amoebas$Aspect_deg <- NA
+
+# --- 7. Loop through rows and extract DEM-based metrics ---
+for (i in 1:nrow(amoebas)) {
+  row <- amoebas[i, ]
+  id <- as.character(row$ID)
+  
+  # Lookup DEM filename
+  dem_file <- dem_map[[id]]
+  if (is.null(dem_file)) {
+    warning(paste("No DEM mapped for ID:", id, "- Skipping."))
+    next
+  }
+  dem_path <- file.path(dem_dir, dem_file)
+  if (!file.exists(dem_path)) {
+    warning(paste("DEM file not found:", dem_path))
+    next
+  }
+  
+  # Read DEM and compute slope/aspect
+  dem <- raster(dem_path)
+  slope <- terrain(dem, opt = "slope", unit = "degrees")
+  aspect <- terrain(dem, opt = "aspect", unit = "degrees")
+  
+  # Get centroid in DEM's CRS
+  centroid_utm <- st_coordinates(st_centroid(row))
+  xy <- data.frame(x = centroid_utm[1], y = centroid_utm[2])
+  
+  # Extract values
+  amoebas$Elevation[i]   <- extract(dem,    xy)
+  amoebas$Slope_deg[i]   <- extract(slope,  xy)
+  amoebas$Aspect_deg[i]  <- extract(aspect, xy)
+}
+
+# --- 8. Final selection and export ---
+amoeba_summary <- st_drop_geometry(amoebas)[, c("ID", "Area_m2", "Lat", "Long", "Elevation", "Slope_deg", "Aspect_deg")]
+
+write.csv(amoeba_summary, output_csv, row.names = FALSE)
+message(paste("✅ Saved summary to:", output_csv))
+
+
+
+
+
+

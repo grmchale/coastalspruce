@@ -249,8 +249,195 @@ tst_canopy_files
 
 ########################################################################################################################
 ##################### SPRUCE AMOEBA WORKFLOW (CANOPIES ABOVE) #####################
+#### Create .shp files for clipping ####
+# Packages
+suppressPackageStartupMessages({
+  library(sf)       # works fine with 2020-era R
+})
+
+# Paths (use forward slashes on Windows in R) 
+in_shp  <- "G:/HyperspectralUAV/Hyperspectral_Vectors/hyperspectral_amoebas_shp.shp"
+out_dir <- "G:/HyperspectralUAV/Hyperspectral_Vectors/amoebas"
+
+# Create output folder if needed
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Read shapefile
+amoebas <- st_read(in_shp, quiet = TRUE)
+
+# Check required field -
+field_name <- "HYP_Clip"
+stopifnot(field_name %in% names(amoebas))
+
+# Build file-safe names from HYP_Clip (strip .dat and sanitize) 
+strip_dat <- function(x) sub("\\.dat$", "", x, ignore.case = TRUE)
+sanitize  <- function(x) {
+  x2 <- gsub("[^A-Za-z0-9_\\-]+", "_", x)        # keep letters, numbers, _, -
+  x2 <- sub("^_+", "", x2)                       # drop leading underscores
+  x2 <- substr(x2, 1, 200)                       # shapefile base name length safety
+  ifelse(nchar(x2) == 0, "feature", x2)
+}
+
+base_names <- sanitize(strip_dat(amoebas[[field_name]]))
+
+# Ensure uniqueness (append index to duplicates)
+make_unique <- function(v) {
+  ave(v, v, FUN = function(x) {
+    if (length(x) == 1) return(x)
+    paste0(x, "_", seq_along(x))
+  })
+}
+uniq_names <- make_unique(base_names)
+
+# Write each feature as its own shapefile
+for (i in seq_len(nrow(amoebas))) {
+  feat   <- amoebas[i, , drop = FALSE]
+  fname  <- paste0(uniq_names[i], ".shp")
+  out_shp <- file.path(out_dir, fname)
+  
+  # st_write with delete_dsn=TRUE overwrites existing files with same name
+  st_write(feat, dsn = out_shp, driver = "ESRI Shapefile",
+           delete_dsn = TRUE, quiet = TRUE)
+  message("Wrote: ", out_shp)
+}
+
+message("Done. Wrote ", nrow(amoebas), " shapefiles to: ", out_dir)
+
+### Do the clipping ###
+
+suppressPackageStartupMessages({
+  library(terra)
+  library(tools)
+})
+
+# ============================
+# Paths
+# ============================
+filtered_img_dir <- "G:/LiD-Hyp/hyp_files"  # .dat files live here
+canopies_path    <- "G:/HyperspectralUAV/Hyperspectral_Vectors/amoebas"  # split shapefiles
+out_dir          <- "./R_outputs/canopy_spectra_amoebas"
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ============================
+# Gather inputs (preserve your style)
+# ============================
+# Gather all .dat files 
+spruce_imgs <- list.files(filtered_img_dir, pattern = "\\.dat$", full.names = TRUE)
+print(spruce_imgs)
+
+# Gather all shapefiles (only those ending with .shp)
+canopies_sites <- list.files(canopies_path, pattern = "\\.shp$", full.names = TRUE)
+
+# Read in the shapefiles and assign names (without extension)
+canopies <- lapply(canopies_sites, function(f) terra::vect(f))
+names(canopies) <- tools::file_path_sans_ext(basename(canopies_sites))
+
+print(canopies)
+
+processed <- character(); skipped <- character()
+
+# ============================
+# Loop: image-by-image, mask with matching shapefile
+# ============================
+invisible(lapply(seq_along(spruce_imgs), function(x) {
+  # Read hyperspectral image and get band names
+  tst_img   <- terra::rast(spruce_imgs[x])
+  tst_names <- names(tst_img)
+  
+  # Match shapefile by stem (image base name without extension)
+  img_stem  <- tools::file_path_sans_ext(basename(spruce_imgs[x]))
+  if (!img_stem %in% names(canopies)) {
+    message("[SKIP] No matching shapefile for: ", img_stem)
+    skipped <<- c(skipped, img_stem)
+    rm(tst_img); gc()
+    return(NULL)
+  }
+  
+  # Get the corresponding canopy polygon (each file should have one feature)
+  tst_quads <- canopies[[img_stem]]
+  shp_name  <- img_stem
+  
+  # Reproject polygons to raster CRS if needed
+  if (!terra::same.crs(tst_img, tst_quads)) {
+    tst_quads <- terra::project(tst_quads, terra::crs(tst_img))
+  }
+  
+  # If multiple polygons ended up inside a file, process each; otherwise this runs once
+  lapply(seq_len(nrow(tst_quads)), function(i) {
+    # Safe crop/mask: skip on any error (covers no-overlap cases)
+    tst_crop <- try(terra::crop(tst_img, tst_quads[i, ]), silent = TRUE)
+    if (inherits(tst_crop, "try-error")) {
+      message("  [SKIP] Crop failed for ", img_stem, " (feature ", i, ")")
+      skipped <<- c(skipped, paste0(img_stem, "_crop_", i))
+      return(NULL)
+    }
+    tst_mask <- try(terra::mask(tst_crop, tst_quads[i, ]), silent = TRUE)
+    if (inherits(tst_mask, "try-error")) {
+      message("  [SKIP] Mask failed for ", img_stem, " (feature ", i, ")")
+      skipped <<- c(skipped, paste0(img_stem, "_mask_", i))
+      return(NULL)
+    }
+    
+    # Set band names the terra way
+    names(tst_mask) <- tst_names
+    
+    # Write the output using the image stem (preserves 1:1 pairing)
+    out_path <- file.path(out_dir, paste0(shp_name, ".dat"))
+    terra::writeRaster(tst_mask, out_path, overwrite = TRUE, filetype = "ENVI")
+    message("  [WROTE] ", out_path)
+    processed <<- c(processed, shp_name)
+    
+    rm(tst_crop, tst_mask); gc()
+    NULL
+  })
+  
+  rm(tst_img, tst_quads); gc()
+  NULL
+}))
+
+# Optional: summary
+cat("\nSummary\n-------\nProcessed unique outputs:", length(unique(processed)), "\n")
+if (length(skipped)) {
+  cat("Skipped entries:", length(skipped), "\n")
+  print(unique(skipped))
+}
+
+library(terra)
+
+# Directory with your clipped outputs
+out_dir <- "./R_outputs/canopy_spectra_amoebas"
+out_dats <- list.files(out_dir, pattern = "\\.dat$", full.names = TRUE)
+
+# Function to find nearest band to wavelength
+nearest_band <- function(r, target_nm) {
+  wv <- suppressWarnings(as.numeric(gsub("[^0-9\\.]", "", names(r))))
+  if (all(is.na(wv))) stop("Band names are not wavelengths")
+  which.min(abs(wv - target_nm))
+}
+
+# Set up grid: square-ish layout
+n <- length(out_dats)
+ncol <- ceiling(sqrt(n))
+nrow <- ceiling(n / ncol)
+
+par(mfrow = c(nrow, ncol), mar = c(1,1,2,1))  # small margins
+
+for (f in out_dats) {
+  r <- rast(f)
+  # Find RGB bands
+  b_red   <- nearest_band(r, 660)
+  b_green <- nearest_band(r, 560)
+  b_blue  <- nearest_band(r, 470)
+  
+  plotRGB(r, r = b_red, g = b_green, b = b_blue,
+          stretch = "lin",
+          axes = FALSE, main = tools::file_path_sans_ext(basename(f)))
+}
+
+
+
 # Define the directory containing the filtered hyperspectral .dat files
-filtered_img_dir <- "G:/LiD-Hyp/filtered_hyp"
+filtered_img_dir <- "G:/LiD-Hyp/hyp_files"
 # Gather all .dat files 
 spruce_imgs <- list.files(filtered_img_dir, pattern = "\\.dat$", full.names = TRUE)
 print(spruce_imgs)
@@ -297,3 +484,5 @@ tst_canopy_files <- list.files("./R_outputs/canopy_spectra_amoebas/")
 print(tst_canopy_files)
 tst_canopy <- terra::rast(file.path("./R_outputs/canopy_spectra_amoebas", tst_canopy_files[1]))
 print(tst_canopy_files)
+
+
