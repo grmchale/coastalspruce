@@ -222,6 +222,15 @@ write_csv(zg_vi_corr_summary,
 print(zg_vi_corr_summary, n = 10)
 
 ################## FIND MAX CORREALTION FOR EVERY ZG_DAY (UP TO 94) ###################
+library(dplyr)
+library(purrr)
+
+matrix_og <-read.csv("./R_outputs/modelling/correlations/dendrometer_correlations/zg_vi_corr_matrix.csv")
+
+# Remove "Mean" indices to match other correlation analyses
+zg_vi_corr_matrix <- matrix_og %>%
+  filter(!grepl("_Mean$", spectral_feature))
+
 # 1) Identify lag columns (zg_day_1 .. zg_day_94), sorted numerically
 lag_cols <- names(zg_vi_corr_matrix) %>%
   keep(~ str_detect(., "^zg_day_\\d+$")) %>%
@@ -246,7 +255,7 @@ zg_lag_winners <- map_dfr(lag_cols, function(lag_col) {
   arrange(lag_days_back)
 
 # (Optional) Save it
-write_csv(zg_lag_winners, "./R_outputs/modelling/correlations/zg_lag_winners.csv")
+write_csv(zg_lag_winners, "./R_outputs/modelling/correlations/dendrometer_correlations/zg_lag_winners.csv")
 
 #--PLOT THIS HOE OUT--
 library(ggplot2)
@@ -263,8 +272,7 @@ plot_data <- zg_lag_winners %>%
 
 # Explicit colors for selected families
 custom_colors <- c(
-  "Boochs"     = "#4C78A8",  # medium blue
-  "CARI"       = "#F58518",  # warm orange
+  "Boochs"     = "#4682B4",  # medium blue
   "PRI"        = "#55A868",  # light/soft green
   "DPI"        = "#E45756",  # coral red
   "Datt3"      = "#B279A2",  # muted purple
@@ -303,8 +311,7 @@ library(readr)
 target_features <- c(
   "Boochs_1nm_Median",
   "PRI_15nm_Median",
-  "CARI_1nm_Mean",
-  "Datt3_5nm_Mean",
+  "Datt3_5nm_Median",
   "DPI_1nm_Median",
   "TCARIOSAVI_1nm_Median"
 )
@@ -312,7 +319,6 @@ target_features <- c(
 # 2) Build index-family palette (your colors)
 family_colors <- c(
   "Boochs"     = "#4C78A8",  # medium blue
-  "CARI"       = "#F58518",  # warm orange
   "PRI"        = "#55A868",  # light/soft green
   "DPI"        = "#E45756",  # coral red
   "Datt3"      = "#B279A2",  # muted purple
@@ -356,7 +362,26 @@ p_lines <- ggplot(
 
 p_lines
 
+############## CREATE TABLE FOR PUBLICATION ################
+library(dplyr)
+library(tidyr)
 
+zg_lag_winners_clean <- zg_lag_winners %>%
+  select(-sign) %>%                                        # drop 'sign'
+  separate(best_index,
+           into = c("Index", "Resample", "drop"),          # keep first two parts
+           sep = "_",
+           extra = "drop", fill = "right", remove = TRUE) %>%
+  select(-drop) %>%                                        # discard anything after 2nd "_"
+  relocate(Index, Resample, .after = lag_days_back)               # optional: place new cols after zg_day
+
+# --- Export cleaned dataframe ---
+out_dir <- "G:/HyperspectralUAV/R_outputs/modelling/correlations/dendrometer_correlations"
+
+# Write CSV
+write.csv(zg_lag_winners_clean,
+          file = file.path(out_dir, "zg_lag_winners_clean.csv"),
+          row.names = FALSE)
 
 ################# TEST INDICES AGAINST NEW DENDRO VARIABLES #########################
 library(dplyr)

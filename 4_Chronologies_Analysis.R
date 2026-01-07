@@ -1331,6 +1331,43 @@ wins <- lapply(seq_len(nrow(s2A)), function(i) {
 })
 names(wins) <- s2A$band
 
+# Calculate bandwidth ranges
+library(dplyr)
+library(tibble)
+library(purrr)
+
+# Helper: integer window based on center and bandwidth (already in your code)
+# mk_win <- function(center, bw) c(lo = ceiling(center - bw/2), hi = floor(center + bw/2))
+
+# 1) Nominal (rounded) window per band and the actual wavelengths available in your data
+band_wl_list <- map(names(wins), function(b) {
+  lo <- wins[[b]][1]; hi <- wins[[b]][2]
+  if (!is.finite(lo) || !is.finite(hi) || lo > hi) return(integer(0))
+  wl_seq <- lo:hi
+  # Keep only wavelengths that exist as columns in the hyperspectral df
+  wl_seq[wl_seq %in% avail_nm]
+})
+names(band_wl_list) <- names(wins)
+
+# 2) Summary table: min/max used, count, and nominal lo/hi for reference
+s2_range_summary <- tibble(
+  band       = names(wins),
+  center     = s2A$center[match(names(wins), s2A$band)],
+  bw         = s2A$bw[match(names(wins), s2A$band)],
+  nominal_lo = map_dbl(names(wins), ~ wins[[.x]][1]),
+  nominal_hi = map_dbl(names(wins), ~ wins[[.x]][2]),
+  used_lo    = map_dbl(band_wl_list, ~ if (length(.x)) min(.x) else NA_real_),
+  used_hi    = map_dbl(band_wl_list, ~ if (length(.x)) max(.x) else NA_real_),
+  n_used_nm  = map_int(band_wl_list, length)
+)
+
+s2_range_summary <- s2_range_summary %>%
+  mutate(range_nm = paste0(used_lo, "-", used_hi)) %>%
+  select(band, center, bw, nominal_lo, nominal_hi, range_nm, n_used_nm)
+
+print(s2_range_summary)
+
+
 # --- Compute row-wise MEAN for each band window ---
 df_out <- df_in
 for (b in s2A$band) {

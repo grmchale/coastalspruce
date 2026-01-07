@@ -616,22 +616,22 @@ ggsave(save_path, p_box, width = 8, height = 5, dpi = 300, bg = "white")
 
 ####################### ADONIS perMANOVA (October, 2025) ############################
 # Randomly sample 200 rows per site
+# Legacy code, we used 400 from the PCA above!!! 
 set.seed(123) # for reproducibility
 VIs_df_sampled <- VIs_df %>%
   group_by(Amoeba_ID) %>%
-  slice_sample(n = 200) %>%
+  slice_sample(n = 200) %>% 
   ungroup()
 
 library(vegan)
 # First, install remotes if you don't have it
-install.packages("remotes")
+#install.packages("remotes")
 
 # Then install the GitHub version
-remotes::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+#remotes::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
 
 # Load it
 library(pairwiseAdonis)
-
 
 # 1. Extract the index matrix (columns ARI1_5nm through WBI_5nm)
 indices_matrix <- VI_subset %>% # Use VI_subset from ANOVA code above
@@ -668,7 +668,7 @@ print(anova(bd))
 cat("\n### Tukey HSD pairwise dispersion ###\n")
 print(TukeyHSD(bd))
 
-## Save ouputs!
+#### Save PERMANOVA ouputs! ####
 out_dir <- file.path("./R_outputs/modelling/perMANOVA/amoeba_pm")
 write.csv(pairwise_res, file.path(out_dir, "pairwise_PERMANOVA.csv"),
           row.names = FALSE)
