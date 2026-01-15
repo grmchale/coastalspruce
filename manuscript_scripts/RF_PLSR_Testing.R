@@ -1,0 +1,101 @@
+# Set working directory to coastalspruce repo
+
+## Read in spectra + dendro data
+# These are the resampled spectral libraries, VIs, and dendro metrics for each spruce crown
+dendro_spectra <- read.csv(
+  file = "manuscript/data/dendro_spectra_joined.csv",
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+########### PLSR MODELS TO PREDICT DENDRO ATTRIBUTES ########
+#install.packages("pls")
+library(pls)
+
+# Select spectral predictors - 1 nm spectral library
+X <- dendro_spectra[, paste0("1nm_", 398:999)]
+
+# remove rows with missing data (if any)
+complete_idx <- complete.cases(X, dendro_spectra$TWD_drone, dendro_spectra$cshrink)
+
+X <- X[complete_idx, ]
+
+### 1) PLSR FOR TWD_DRONE - TWD ON DAY OF DRONE FLIGHT ###
+Y_twd <- dendro_spectra$TWD_drone[complete_idx]
+
+pls_twd <- plsr(
+  Y_twd ~ as.matrix(X),
+  ncomp = 20,
+  scale = TRUE,
+  validation = "CV"
+)
+
+# Choose optimal number of components
+validationplot(pls_twd, val.type = "RMSEP")
+# Summary
+summary(pls_twd)
+# R² vs components
+plot(R2(pls_twd), legendpos = "topright")
+# Predictions
+twd_pred <- predict(pls_twd, ncomp = which.min(RMSEP(pls_twd)$val[1, , ]))
+
+### 2) PLSR FOR CSHRINK - CONSECUTIVE DAYS PRE-FLIGHT OF NO NET GROWTH ###
+Y_cshrink <- dendro_spectra$cshrink[complete_idx]
+
+pls_cshrink <- plsr(
+  Y_cshrink ~ as.matrix(X),
+  ncomp = 20,
+  scale = TRUE,
+  validation = "CV"
+)
+
+# Choose optimal number of components
+validationplot(pls_cshrink, val.type = "RMSEP")
+# Summary
+summary(pls_cshrink)
+# R² vs components
+plot(R2(pls_cshrink), legendpos = "topright")
+# Predictions
+cshrink_pred <- predict(pls_cshrink, ncomp = which.min(RMSEP(pls_cshrink)$val[1, , ]))
+
+### PLSR GRAPH FOR CSHRINK ###
+# Optimal number of components
+n_opt <- which.min(RMSEP(pls_cshrink)$val[1, , ])
+
+# Cross-validated predictions
+cshrink_cv_pred <- pls_cshrink$validation$pred[, , n_opt]
+
+# Observed values
+cshrink_obs <- Y_cshrink
+
+# CV R²
+r2_cv <- cor(cshrink_obs, cshrink_cv_pred)^2
+
+# RMSEP
+rmsep_cv <- RMSEP(pls_cshrink)$val[1, n_opt + 1, 1]
+
+# Plot
+plot(
+  cshrink_obs,
+  cshrink_cv_pred,
+  pch = 16,
+  xlab = "Observed cshrink",
+  ylab = "PLSR-predicted cshrink (CV)",
+  main = paste0(
+    "PLSR Prediction of cshrink (", n_opt, " components)\n",
+    "CV R² = ", round(r2_cv, 2),
+    ", RMSEP = ", round(rmsep_cv, 2),
+    ", n = ", length(cshrink_obs)
+  )
+)
+abline(0, 1, lwd = 2, lty = 2)
+abline(lm(cshrink_cv_pred ~ cshrink_obs), col = "black")
+
+
+
+
+
+
+
+
+
