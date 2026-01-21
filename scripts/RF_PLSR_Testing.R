@@ -3,12 +3,12 @@
 ## Read in spectra + dendro data
 # These are the resampled spectral libraries, VIs, and dendro metrics for each spruce crown
 dendro_spectra <- read.csv(
-  file = "manuscript/data/dendro_spectra_joined.csv",
+  file = "./data/dendro_spectra_joined.csv",
   check.names = FALSE,
   stringsAsFactors = FALSE
 )
 
-########### PLSR MODELS TO PREDICT DENDRO ATTRIBUTES ########
+################# PLSR MODELS TO PREDICT DENDRO ATTRIBUTES ####################
 #install.packages("pls")
 library(pls)
 
@@ -91,11 +91,97 @@ plot(
 abline(0, 1, lwd = 2, lty = 2)
 abline(lm(cshrink_cv_pred ~ cshrink_obs), col = "black")
 
+################ RF MODELS TO PREDICT DENDRO ATTRIBUTES ######################
+# Filter out stats first before RF'ing
+dendro_clean <- dendro_spectra[
+  , !grepl("(Q75|Q25|Mean|SD)$", names(dendro_spectra))
+]
+#install.packages("VSURF")
+library(VSURF)
+library(randomForest)
+library(caret)
+# Create predictor matrix
+X <- dendro_clean[
+                  which(names(dendro_clean) == "1nm_398"):
+                    which(names(dendro_clean) == "Vogelmann4_15nm_Median")]
 
+X <- as.data.frame(X)
 
+#### 1) VSURF + RF FOR TWD_DRONE ###
+# Response
+Y_twd <- dendro_clean$TWD_drone
 
+# VSURF VARIABLE SELECTION
+set.seed(123)
+vsurf_twd <- VSURF(
+  x = X,
+  y = Y_twd,
+  ntree = 1000,
+  parallel = TRUE
+)
 
+# Use prediction step variables
+vars_twd <- vsurf_twd$varselect.pred
 
+# Reduced predictor set
+X_twd_sel <- X[, vars_twd, drop = FALSE]
 
+# TWD_DRONE RF MODEL
+set.seed(123)
 
+rf_twd <- randomForest(
+  x = X_twd_sel,
+  y = Y_twd,
+  ntree = 1000,
+  importance = TRUE
+)
 
+# Predictions
+twd_pred <- predict(rf_twd, X_twd_sel)
+
+# Performance metrics
+twd_rmse <- RMSE(twd_pred, Y_twd)
+twd_r2   <- R2(twd_pred, Y_twd)
+
+twd_rmse
+twd_r2
+
+### 2) VSURF + RF FOR CSHRINK ###
+# Response
+Y_cshrink <- dendro_clean$cshrink
+
+# VSURF variable selection
+set.seed(123)
+
+vsurf_cshrink <- VSURF(
+  x = X,
+  y = Y_cshrink,
+  ntree = 1000,
+  parallel = TRUE
+)
+
+# Use prediction step variables
+vars_cshrink <- vsurf_cshrink$varselect.pred
+
+# Reduced predictor set 
+X_cshrink_sel <- X[, vars_cshrink, drop = FALSE]
+
+# Random forest model
+set.seed(123)
+
+rf_cshrink <- randomForest(
+  x = X_cshrink_sel,
+  y = Y_cshrink,
+  ntree = 1000,
+  importance = TRUE
+)
+
+# Predictions
+cshrink_pred <- predict(rf_cshrink, X_cshrink_sel)
+
+# Performance metrics
+cshrink_rmse <- RMSE(cshrink_pred, Y_cshrink)
+cshrink_r2   <- R2(cshrink_pred, Y_cshrink)
+
+cshrink_rmse
+cshrink_r2
