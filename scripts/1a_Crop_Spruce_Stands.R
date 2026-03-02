@@ -13,6 +13,8 @@ library(sf)
 library(doFuture)
 
 ############################# CHRONOLOGY WORKFLOW PREP ########################################
+## Splits a single .shp file of all spruce crowns into multiple shapefiles parsed by site
+# For sites with to flight lines crossing the plot, two sets of shapefiles are made (e.g. FP_East_shapefile and FP_West_shapfile)
 suppressPackageStartupMessages({
   library(terra)
 })
@@ -73,6 +75,8 @@ cat("\nDone. Shapefiles written to:\n", out_dir, "\n")
 ###########################################################################################################
 ########################### CROP SPRUCE CANOPIES (CHRONOLOGY WORKFLOW) ####################################
 
+## Crop crown shapefiles to hyperspectral image, producing mini hyperspectral images for each crown
+
 # =========================
 # PACKAGES
 # =========================
@@ -83,9 +87,9 @@ suppressPackageStartupMessages({
 # =========================
 # USER PATHS
 # =========================
-shp_dir         <- "G:/LiD-Hyp/chronology_shapefiles_split"
-raster_dir      <- "G:/LiD-Hyp/_filtered_hyp_EVI02"
-out_dir         <- "./R_outputs/canopy_spectra_chronologies/"
+shp_dir         <- "./data/chronology_shapefiles" #Updated relative path for GitHub repo
+raster_dir      <- "G:/LiD-Hyp/_filtered_hyp_EVI02" # Filtered (EVI < 0.2) hyperspectral image clips of each site
+out_dir         <- "./R_outputs/canopy_spectra_chronologies/" # Output hyperspectral clips of spruce crowns
 
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -206,7 +210,7 @@ cat("\nDone. Wrote ", total_written, " clipped rasters to:\n", normalizePath(out
 
 
 ###########################################################################################################
-########################### CROP SPRUCE CANOPIES (DENDROMETER WORKFLOW) ###################################
+########################### CROP SPRUCE CANOPIES (OLD DENDROMETER WORKFLOW) ###################################
 
 # Define the directory containing the filtered hyperspectral .dat files
 filtered_img_dir <- "G:/LiD-Hyp/filtered_hyp"
@@ -433,56 +437,3 @@ for (f in out_dats) {
           stretch = "lin",
           axes = FALSE, main = tools::file_path_sans_ext(basename(f)))
 }
-
-
-
-# Define the directory containing the filtered hyperspectral .dat files
-filtered_img_dir <- "G:/LiD-Hyp/hyp_files"
-# Gather all .dat files 
-spruce_imgs <- list.files(filtered_img_dir, pattern = "\\.dat$", full.names = TRUE)
-print(spruce_imgs)
-
-# Define the directory containing the shapefiles
-canopies_path <- "G:/LiD-Hyp/Hyperspectral_PIRU_shapefiles/"
-# Gather all shapefiles (only those ending with .shp)
-canopies_sites <- list.files(canopies_path, pattern = "\\.shp$", full.names = FALSE)
-# Read in the shapefiles and assign names (without extension)
-canopies <- lapply(canopies_sites, function(f) {
-  terra::vect(file.path(canopies_path, f))
-})
-names(canopies) <- tools::file_path_sans_ext(canopies_sites)
-
-print(canopies)
-
-# Loop over each hyperspectral image and crop/mask it using the corresponding shapefile
-lapply(seq_along(spruce_imgs), function(x) {
-  # Read hyperspectral image and get band names
-  tst_img <- terra::rast(spruce_imgs[x])
-  tst_names <- names(tst_img)
-  # Get the corresponding canopy polygons
-  tst_quads <- canopies[[x]]
-  # Get the shapefile name (without extension)
-  shp_name <- names(canopies)[x]
-  
-  # Loop over each polygon in the shapefile (if multiple polygons exist)
-  lapply(seq_len(nrow(tst_quads)), function(i) {
-    tst_crop <- terra::crop(tst_img, tst_quads[i,])
-    tst_mask <- terra::mask(tst_crop, tst_quads[i,])
-    bandnames(tst_mask) <- tst_names
-    # Write the output using the shapefile name (without any additional suffix)
-    writeRaster(tst_mask, 
-                file.path("./R_outputs/canopy_spectra_amoebas", paste0(shp_name, ".dat")),
-                overwrite = TRUE, filetype = "ENVI")
-    rm(tst_crop, tst_mask)
-  })
-  rm(tst_img, tst_quads)
-  gc()
-})
-
-# Verify the outputs
-tst_canopy_files <- list.files("./R_outputs/canopy_spectra_amoebas/")
-print(tst_canopy_files)
-tst_canopy <- terra::rast(file.path("./R_outputs/canopy_spectra_amoebas", tst_canopy_files[1]))
-print(tst_canopy_files)
-
-
