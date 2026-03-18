@@ -1,61 +1,54 @@
-########## DATA READ IN ########
+########## DATA READ IN + CLEANING ########
 
-crown_rugosity <-read.csv("./LiDAR/Normalized/LiDAR_crowns/crown_rugosity.csv") # Rugosity of crowns
-crown_metrics <-read.csv("./LiDAR/Normalized/LiDAR_crowns/crown_metrics.csv") # Point cloud metrics
-crown_areas <- read.csv("./LiDAR/Normalized/LiDAR_crowns/crown_areas.csv") # Area of each crown
+#crown_rugosity <-read.csv("./LiDAR/Normalized/LiDAR_crowns/crown_rugosity.csv") # Rugosity of crowns
+#crown_metrics <-read.csv("./LiDAR/Normalized/LiDAR_crowns/crown_metrics.csv") # Point cloud metrics
+#crown_areas <- read.csv("./LiDAR/Normalized/LiDAR_crowns/crown_areas.csv") # Area of each crown
 
-lidar_metrics <- crown_rugosity |>
-  left_join(crown_metrics, by = "TreeID") |>
-  left_join(crown_areas, by = "TreeID")
+#lidar_metrics <- crown_rugosity |>
+#  left_join(crown_metrics, by = "TreeID") |>
+#  left_join(crown_areas, by = "TreeID")
 
 # Write to RDS
-saveRDS(lidar_metrics, "./data/lidar_metrics.rds")
+#saveRDS(lidar_metrics, "./data/lidar_metrics.rds")
 
 # Read back in
 lidar_metrics <- readRDS("./data/lidar_metrics.rds")
 
-################## RANDOM FOREST TO PREDICT AGE #################################
-install.packages("dplyr")
+#install.packages("dplyr")
 library(dplyr)
 chrono <- readRDS("./data/chrono_VIstats_metrics.rds")
+# Filter out extraneous stats
 chrono_filt <- chrono %>%
   select(-matches("(SD|Q25|Q75|Mean)$"))
-chrono_filt <- chrono_filt %>%
-  left_join(
-    dplyr::select(crown_rugosity, TreeID, rugosity),
-    by = "TreeID"
-  )
-# safest: fully qualify dplyr verbs to avoid select() conflicts
-chrono_rf <- dplyr::left_join(
-  chrono_filt,
-  crown_metrics,                 # do NOT drop TreeID here
-  by = "TreeID"
-)
+# Join spectra + struc metrics together
+struc_spec <- chrono_filt |> inner_join(lidar_metrics, by = "TreeID")
+# Create new field representing tree age in years (rather than germination year)
+struc_spec <- struc_spec |> mutate(age_2 = 2024 - age)
+# Remove crowns with no age
+struc_spec <- struc_spec |> filter(!is.na(age))
+
+################## RANDOM FOREST TO PREDICT AGE #################################
 
 # Random Forest for AGE (robust, repeated)
-# Inputs: chrono_rf, spectral cols 7:790 + lidar cols "rugosity":"zpcum9"
+# Inputs: struc_spec, spectral cols 7:790 + lidar cols "rugosity":"zpcum9"
 # Output: ranked predictors by mean %IncMSE + stability
-
 
 library(randomForest)
 
-## 1) Subset to rows with AGE
-df <- chrono_rf
-if (!"age" %in% names(df)) stop("Column 'age' not found in chrono_rf.")
-df <- df[!is.na(df$age), , drop = FALSE]   # expect ~216 rows
 
-## 2) Build predictor matrix: spectral 7:790 and lidar rugosity:zpcum9
+## 1) Build predictor matrix: spectral 7:790 and lidar rugosity:zpcum9
 # spectral
+df <- struc_spec
 pmin <- 7
-pmax <- min(790, ncol(df))
+pmax <- min(398, ncol(df))
 if (pmin > ncol(df)) stop("Data has fewer than 7 columns; check chrono_rf.")
 spec_idx <- pmin:pmax
 
 # lidar range by names (inclusive)
 lidar_start <- match("rugosity", names(df))
-lidar_end   <- match("zpcum9",  names(df))
+lidar_end   <- match("Area_m2",  names(df))
 if (is.na(lidar_start) || is.na(lidar_end)) {
-  stop("Could not find 'rugosity' and/or 'zpcum9' in chrono_rf column names.")
+  stop("Could not find 'rugosity' and/or 'Area_m2' in chrono_rf column names.")
 }
 lidar_idx <- seq(lidar_start, lidar_end)
 
@@ -63,13 +56,13 @@ lidar_idx <- seq(lidar_start, lidar_end)
 pred_idx <- unique(c(spec_idx, lidar_idx))
 
 X_raw <- df[, pred_idx, drop = FALSE]
-y     <- df[["age"]]
+y     <- df[["age_2"]]
 
-## 3) Keep numeric predictors only
+## 2) Keep numeric predictors only
 is_num <- vapply(X_raw, is.numeric, logical(1))
 X_raw  <- X_raw[, is_num, drop = FALSE]
 
-## 4) Handle missing values and constants
+## 3) Handle missing values and constants
 # drop columns with >20% NA
 na_frac <- vapply(X_raw, function(z) mean(is.na(z)), numeric(1))
 X_raw   <- X_raw[, na_frac <= 0.20, drop = FALSE]
@@ -91,7 +84,7 @@ X_raw  <- X_raw[, sd_vec > 0, drop = FALSE]
 # Optional: standardize (RF doesn't require, harmless)
 X <- as.data.frame(scale(X_raw))
 
-## 5) Repeated RF for robust importance
+## 4) Repeated RF for robust importance
 set.seed(41)
 B <- 200                         # number of runs; raise to 500 if you want extra stability
 p <- ncol(X)
@@ -129,7 +122,7 @@ for (b in seq_len(B)) {
   top_hits[top_vars] <- top_hits[top_vars] + 1L
 }
 
-## 6) Aggregate importance + stability
+## 5) Aggregate importance + stability
 mean_incMSE <- rowMeans(imp_mat, na.rm = TRUE)
 sd_incMSE   <- apply(imp_mat, 1, sd, na.rm = TRUE)
 rank_rf     <- rank(-mean_incMSE, ties.method = "average")
@@ -147,7 +140,7 @@ rf_age_summary <- data.frame(
 # sort by rank (lower is better)
 rf_age_summary <- rf_age_summary[order(rf_age_summary$RF_Rank), ]
 
-## 7) Report: overall robustness + strongest predictors
+## 6) Report: overall robustness + strongest predictors
 cat(sprintf("\nRepeated RF runs: B = %d, ntree = %d, mtry = %d, predictors p = %d, rows n = %d\n",
             B, ntree_val, mtry_val, p, nrow(X)))
 cat(sprintf("OOB RMSE (mean ± sd): %.2f ± %.2f\n\n",
@@ -275,7 +268,7 @@ print(cv_results)
 
 ############## AGE vs ZMAX LINEAR REGRESSION ##########
 # Keep only rows with both age and zmax
-df_lin <- chrono_rf[!is.na(chrono_rf$age) & !is.na(chrono_rf$zmax), ]
+df_lin <- struc_spec[!is.na(struc_spec$age_2) & !is.na(struc_spec$zmax), ]
 
 # Fit linear regression
 lm_age_zmax <- lm(age ~ zmax, data = df_lin)
@@ -284,8 +277,117 @@ lm_age_zmax <- lm(age ~ zmax, data = df_lin)
 summary(lm_age_zmax)
 
 # Quick plot with regression line
-plot(df_lin$zmax, df_lin$age,
+plot(df_lin$zmax, df_lin$age_2,
      xlab = "zmax", ylab = "Age",
      main = "Linear regression: Age ~ zmax",
      pch = 16, col = "darkblue")
 abline(lm_age_zmax, col = "red", lwd = 2)
+
+########## QUANTILE REGRESSIONS ##################
+#install.packages("quantreg")
+#install.packages("quantregForest")
+#install.packages("ggplot2")
+library(quantreg)
+
+#### Single predictor (one veg index) ###
+qr_single <- rq(age_2 ~ Datt3_1nm_Median, data = struc_spec, tau = c(0.10, 0.25, 0.50, 0.75, 0.90))
+summary(qr_single)
+
+# Multiple predictors (spectral + structural)
+qr_multi <- rq(age_2 ~ Datt3_1nm_Median + zmax + zq95 + zsd + rugosity,
+               data = struc_spec,
+               tau = c(0.10, 0.25, 0.50, 0.75, 0.90))
+summary(qr_multi)
+
+#### Quantile regression forest ###
+library(quantregForest)
+library(ggplot2)
+
+# Set up your predictor matrix — use your top predictors from the RF importance output
+predictors <- c("zmax", "zq95", "zsd", "zmean", "rugosity",
+                "Datt3_1nm_Median", "D1_5nm_Median", "Boochs_1nm_Median", "EGFN_5nm_Median")
+X_qrf <- struc_spec[, predictors]
+y_qrf <- struc_spec$age_2
+# Fit quantile regression forest
+qrf_model <- quantregForest(x = X_qrf, y = y_qrf, ntree = 1000, keep.inbag = TRUE)
+# Predict quantiles for each observation
+qrf_preds <- predict(qrf_model, newdata = X_qrf, what = c(0.10, 0.50, 0.90))
+colnames(qrf_preds) <- c("q10", "q50", "q90")
+
+# ── 1. OOB-based RMSE on the median (q50) prediction ──────────────────────────
+# This is comparable to your earlier RF RMSE
+oob_preds_median <- predict(qrf_model, what = 0.50)  # uses OOB by default
+rmse_qrf <- sqrt(mean((y_qrf - oob_preds_median)^2, na.rm = TRUE))
+mae_qrf  <- mean(abs(y_qrf - oob_preds_median), na.rm = TRUE)
+cat(sprintf("QRF Median RMSE: %.2f\n", rmse_qrf))
+cat(sprintf("QRF Median MAE:  %.2f\n", mae_qrf))
+
+# ── 2. Pinball loss (quantile-specific accuracy) ───────────────────────────────
+# This is the proper loss function for quantile predictions.
+# For a given tau, it penalizes over- and under-prediction asymmetrically.
+pinball <- function(y, q_hat, tau) {
+  mean(ifelse(y >= q_hat, tau * (y - q_hat), (tau - 1) * (y - q_hat)))
+}
+
+oob_q10 <- predict(qrf_model, what = 0.10)
+oob_q50 <- predict(qrf_model, what = 0.50)
+oob_q90 <- predict(qrf_model, what = 0.90)
+
+cat(sprintf("Pinball loss q10: %.3f\n", pinball(y_qrf, oob_q10, 0.10)))
+cat(sprintf("Pinball loss q50: %.3f\n", pinball(y_qrf, oob_q50, 0.50)))
+cat(sprintf("Pinball loss q90: %.3f\n", pinball(y_qrf, oob_q90, 0.90)))
+
+# ── 3. Coverage: do 80% of obs fall inside the 10th–90th interval? ────────────
+# Ideally ~80% of actual ages should fall between q10 and q90 predictions
+coverage_80 <- mean(y_qrf >= oob_q10 & y_qrf <= oob_q90, na.rm = TRUE)
+cat(sprintf("80%% interval coverage: %.1f%%\n", coverage_80 * 100))
+# If this is >> 80%, your intervals are too wide (overconfident uncertainty)
+# If this is << 80%, your intervals are too narrow (underconfident)
+
+# ── 4. Interval width ─────────────────────────────────────────────────────────
+# How wide are the prediction intervals on average?
+interval_width <- oob_q90 - oob_q10
+cat(sprintf("Mean 80%% interval width: %.1f years\n", mean(interval_width)))
+
+# ── 5. Observed vs predicted plot (median) ────────────────────────────────────
+diag_df <- data.frame(
+  observed  = y_qrf,
+  predicted = as.numeric(oob_q50),
+  q10       = as.numeric(oob_q10),
+  q90       = as.numeric(oob_q90)
+)
+
+ggplot(diag_df, aes(x = observed, y = predicted)) +
+  geom_errorbar(aes(ymin = q10, ymax = q90), alpha = 0.3, color = "steelblue") +
+  geom_point(alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Observed Age", y = "Predicted Age (median + 80% interval)",
+       title = "QRF: Observed vs Predicted") +
+  theme_bw()
+
+# ── 6. Residual plot ──────────────────────────────────────────────────────────
+diag_df$residual <- diag_df$observed - diag_df$predicted
+
+ggplot(diag_df, aes(x = predicted, y = residual)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  geom_smooth(method = "loess", se = FALSE, color = "steelblue") +
+  labs(x = "Predicted Age", y = "Residual (Observed - Predicted)",
+       title = "QRF Residuals") +
+  theme_bw()
+
+#### Age vs. veg index w/ quantile regression lines ###
+library(quantreg)
+library(ggplot2)
+
+# Fit quantiles
+taus <- c(0.10, 0.25, 0.50, 0.75, 0.90)
+qr_fit <- rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = taus)
+
+# Plot
+ggplot(struc_spec, aes(x = EGFR_5nm_Median, y = age_2)) +
+  geom_point(alpha = 0.5) +
+  geom_quantile(quantiles = taus, aes(color = after_stat(quantile))) +
+  scale_color_viridis_c(name = "Quantile") +
+  labs(x = "EGFR_5nm_Median", y = "Age", title = "Quantile Regression: Age ~ EGFR") +
+  theme_bw()
