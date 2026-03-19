@@ -1,0 +1,11 @@
+"Model","Formula","AIC","PseudoR2"
+"EGFR_full_structural","EGFR_5nm_Median + zq95 + zsd + rugosity",1997.7,0.22
+"EGFR_zq95_zsd","EGFR_5nm_Median + zq95 + zsd",1998.04,0.215
+"EGFR_zq95","EGFR_5nm_Median + zq95",1998.85,0.21
+"Datt3_zq95_zsd","Datt3_1nm_Median + zq95 + zsd",2013.51,0.184
+"EGFR_only","EGFR_5nm_Median",2024.59,0.153
+"zq95_only","zq95",2036.33,0.128
+"structural_only","zmax + zsd + rugosity",2038.7,0.132
+"zmax_only","zmax",2041.15,0.118
+"Datt3_only","Datt3_1nm_Median",2053.35,0.09
+"rugosity_only","rugosity",2081.09,0.025

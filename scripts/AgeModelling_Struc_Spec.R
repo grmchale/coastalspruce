@@ -13,10 +13,9 @@
 
 # Read back in
 lidar_metrics <- readRDS("./data/lidar_metrics.rds")
-
+chrono <- readRDS("./data/chrono_VIstats_metrics.rds")
 #install.packages("dplyr")
 library(dplyr)
-chrono <- readRDS("./data/chrono_VIstats_metrics.rds")
 # Filter out extraneous stats
 chrono_filt <- chrono %>%
   select(-matches("(SD|Q25|Q75|Mean)$"))
@@ -289,17 +288,34 @@ abline(lm_age_zmax, col = "red", lwd = 2)
 #install.packages("ggplot2")
 library(quantreg)
 
-#### Single predictor (one veg index) ###
-qr_single <- rq(age_2 ~ Datt3_1nm_Median, data = struc_spec, tau = c(0.10, 0.25, 0.50, 0.75, 0.90))
+#### (TEST) Single predictor (one veg index) ###
+qr_single <- rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = c(0.10, 0.25, 0.50, 0.75, 0.90))
 summary(qr_single)
 
-# Multiple predictors (spectral + structural)
-qr_multi <- rq(age_2 ~ Datt3_1nm_Median + zmax + zq95 + zsd + rugosity,
+# Pseudo R squared
+rq.fit <- rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = 0.50)
+rq.null <- rq(age_2 ~ 1, data = struc_spec, tau = 0.50)
+
+# Pseudo R² per quantile
+1 - (summary(rq.fit)$rho / summary(rq.null)$rho)
+
+taus <- c(0.10, 0.25, 0.50, 0.75, 0.90)
+
+pseudo_r2 <- sapply(taus, function(tau) {
+  fit  <- rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = tau)
+  null <- rq(age_2 ~ 1,               data = struc_spec, tau = tau)
+  1 - (summary(fit)$rho / summary(null)$rho)
+})
+
+data.frame(tau = taus, pseudo_R2 = round(pseudo_r2, 3))
+
+#### (TEST) Multiple predictors (spectral + structural) ###
+qr_multi <- rq(age_2 ~ EGFR_5nm_Median + zmax + zq95 + zsd + rugosity,
                data = struc_spec,
-               tau = c(0.10, 0.25, 0.50, 0.75, 0.90))
+               tau = c(0.25, 0.50, 0.75, 0.90))
 summary(qr_multi)
 
-#### Quantile regression forest ###
+#### (TEST) Quantile regression forest ###
 library(quantregForest)
 library(ggplot2)
 
@@ -376,18 +392,186 @@ ggplot(diag_df, aes(x = predicted, y = residual)) +
        title = "QRF Residuals") +
   theme_bw()
 
-#### Age vs. veg index w/ quantile regression lines ###
+#### Continuous binning model + model metrics + plot ###
+
 library(quantreg)
 library(ggplot2)
+# Binning approach analog — age predicts EGFR
+qr_continuous <- rq(EGFR_5nm_Median ~ age_2, 
+                    data = struc_spec,
+                    tau  = c(0.10, 0.25, 0.50, 0.75, 0.90))
 
-# Fit quantiles
 taus <- c(0.10, 0.25, 0.50, 0.75, 0.90)
-qr_fit <- rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = taus)
+
+qr_fit <- rq(EGFR_5nm_Median ~ age_2, data = struc_spec, tau = taus)
+
+# Build prediction dataframe across the full age range
+age_seq  <- data.frame(age_2 = seq(min(struc_spec$age_2), 
+                                   max(struc_spec$age_2), 
+                                   length.out = 200))
+
+# Get predicted EGFR at each tau across the age sequence
+pred_list <- lapply(taus, function(tau) {
+  m <- rq(EGFR_5nm_Median ~ age_2, data = struc_spec, tau = tau)
+  data.frame(age_2 = age_seq$age_2,
+             EGFR_pred = predict(m, newdata = age_seq),
+             tau = as.factor(tau))
+})
+
+pred_df <- do.call(rbind, pred_list)
+
+## Extract model metrics from each tau
+taus <- c(0.10, 0.25, 0.50, 0.75, 0.90)
+
+# Fit each tau separately so we can extract metrics
+models_by_tau <- lapply(taus, function(tau) {
+  rq(EGFR_5nm_Median ~ age_2, data = struc_spec, tau = tau)
+})
+names(models_by_tau) <- paste0("tau_", taus)
+
+# Null model per tau (intercept only)
+null_by_tau <- lapply(taus, function(tau) {
+  rq(EGFR_5nm_Median ~ 1, data = struc_spec, tau = tau)
+})
+
+# Extract AIC and R1 for each tau
+metrics_df <- data.frame(
+  tau      = taus,
+  AIC      = sapply(models_by_tau, AIC),
+  R1       = mapply(function(m, n) 1 - m$rho / n$rho, models_by_tau, null_by_tau),
+  coef_int = sapply(models_by_tau, function(m) coef(m)[1]),  # intercept
+  coef_age = sapply(models_by_tau, function(m) coef(m)[2])   # slope on age_2
+)
+
+metrics_df <- metrics_df |>
+  mutate(across(c(AIC, R1, coef_int, coef_age), ~ round(.x, 3)))
+
+print(metrics_df)
+write.csv(metrics_df, "outputs/EGFR_age_metricsbytau.csv", row.names = FALSE)
 
 # Plot
-ggplot(struc_spec, aes(x = EGFR_5nm_Median, y = age_2)) +
-  geom_point(alpha = 0.5) +
-  geom_quantile(quantiles = taus, aes(color = after_stat(quantile))) +
-  scale_color_viridis_c(name = "Quantile") +
-  labs(x = "EGFR_5nm_Median", y = "Age", title = "Quantile Regression: Age ~ EGFR") +
-  theme_bw()
+p <- ggplot() +
+  geom_point(data = struc_spec, aes(x = age_2, y = EGFR_5nm_Median),
+             alpha = 0.4, size = 1.5) +
+  geom_line(data = pred_df, aes(x = age_2, y = EGFR_pred, 
+                                color = tau, linetype = tau), 
+            linewidth = 0.9) +
+  scale_color_manual(values = c("0.1"  = "#2166ac",
+                                "0.25" = "#74add1",
+                                "0.5"  = "#000000",
+                                "0.75" = "#f46d43",
+                                "0.9"  = "#d73027"),
+                     name = "Quantile") +
+  scale_linetype_manual(values = c("0.1"  = "dashed",
+                                   "0.25" = "dotdash",
+                                   "0.5"  = "solid",
+                                   "0.75" = "dotdash",
+                                   "0.9"  = "dashed"),
+                        name = "Quantile") +
+  labs(x     = "Tree Age",
+       y     = "EGFR 5nm Median",
+       title = "Quantile Regression: Tree Age vs. EGFR") +
+  theme_bw(base_size = 14)
+
+ggsave("outputs/EGFR_age_quantreg.png", plot = p,
+       width = 8, height = 6, units = "in", dpi = 300)
+
+#### LICHEN 90TH QUANTILE APPROACH + TESTS MULTIPLE MODELS ####
+library(quantreg)
+library(tidyverse)
+
+# ── 1. Define candidate models 
+XVAR <- c(
+  "EGFR_5nm_Median",
+  "EGFR_5nm_Median + zq95",
+  "EGFR_5nm_Median + zq95 + zsd + rugosity",
+  "EGFR_5nm_Median + zq95 + zsd",
+  "zmax + zsd + rugosity",
+  "zq95",
+  "zmax",
+  "rugosity",
+  "Datt3_1nm_Median",
+  "Datt3_1nm_Median + zq95 + zsd"
+)
+
+XVAR_names <- c(
+  "EGFR_only",
+  "EGFR_zq95",
+  "EGFR_full_structural",
+  "EGFR_zq95_zsd",
+  "structural_only",
+  "zq95_only",
+  "zmax_only",
+  "rugosity_only",
+  "Datt3_only",
+  "Datt3_zq95_zsd"
+)
+
+# ── 2. Fit all models at tau = 0.90 ───────────────────────────────────────────
+formulas <- lapply(paste("age_2 ~", XVAR), as.formula)
+models   <- lapply(formulas, function(f) rq(f, tau = 0.90, data = struc_spec))
+names(models) <- XVAR_names
+
+# ── 3. Null model for pseudo-R² ───────────────────────────────────────────────
+null_model <- rq(age_2 ~ 1, tau = 0.90, data = struc_spec)
+
+# ── 4. Pseudo-R² (R1) and AIC for each model ──────────────────────────────────
+pseudo_r2 <- sapply(models, function(m) 1 - m$rho / null_model$rho)
+aic_vals  <- sapply(models, AIC)
+
+model_comparison <- data.frame(
+  Model     = XVAR_names,
+  Formula   = XVAR,
+  AIC       = round(aic_vals, 2),
+  PseudoR2  = round(pseudo_r2, 3)
+) |> arrange(AIC)
+
+print(model_comparison)
+write.csv(model_comparison, "outputs/age_quantreg_modelcomparison.csv", row.names = FALSE)
+
+# ── 5. Bootstrapped confidence intervals for best model ───────────────────────
+# Replace "EGFR_full_structural" with whichever model wins above
+best_model_name <- model_comparison$Model[1]
+best_model      <- models[[best_model_name]]
+
+pred_ci <- predict(best_model, struc_spec,
+                   interval  = "confidence",
+                   level     = 0.95,
+                   type      = "percentile",
+                   se        = "boot",
+                   R         = 1000)  # bootstrap resamples
+
+pred_df_2 <- cbind(struc_spec, as.data.frame(pred_ci))
+# pred_df now has columns: fit, lower, higher
+
+# ── 6. Figure: age ~ EGFR with 90th quantile fit + CI ─────────────────────────
+tiff(paste0("outputs/EGFR_age_90th_quantile_", format(Sys.time(), "%y%d%m"), ".tiff"),
+     width = 1200, height = 1200, units = "px", pointsize = 24)
+
+plot(age_2 ~ EGFR_5nm_Median, data = struc_spec,
+     xlab = "EGFR 5nm Median",
+     ylab = "Tree Age",
+     cex.lab = 1.7, cex.axis = 1.7)
+
+# Sort by predictor for clean line plotting
+pred_sorted <- pred_df_2[order(pred_df_2$EGFR_5nm_Median), ]
+points(pred_sorted$EGFR_5nm_Median, pred_sorted$fit,    col = "blue",  pch = 19)
+points(pred_sorted$EGFR_5nm_Median, pred_sorted$lower,  col = "black", pch = 4, cex = 0.25)
+points(pred_sorted$EGFR_5nm_Median, pred_sorted$higher, col = "black", pch = 4, cex = 0.25)
+
+# Add pseudo-R² and model formula to plot
+best_r2 <- pseudo_r2[best_model_name]
+text(max(struc_spec$EGFR_5nm_Median) * 0.6,
+     max(struc_spec$age_2, na.rm = TRUE) * 0.95,
+     labels = paste0("R1 = ", round(best_r2, 3)), cex = 1.4)
+text(max(struc_spec$EGFR_5nm_Median) * 0.6,
+     max(struc_spec$age_2, na.rm = TRUE) * 0.88,
+     labels = model_comparison$Formula[1], cex = 0.9)
+
+legend("topright",
+       legend = c("Raw Data", "90th Quantile Fit", "95% Bootstrap CI"),
+       col    = c("black", "blue", "black"),
+       pch    = c(1, 19, 4))
+
+dev.off()
+
