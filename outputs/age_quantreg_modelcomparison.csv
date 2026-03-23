@@ -1,11 +1,13 @@
-"Model","Formula","AIC","PseudoR2"
-"EGFR_full_structural","EGFR_5nm_Median + zq95 + zsd + rugosity",1997.7,0.22
-"EGFR_zq95_zsd","EGFR_5nm_Median + zq95 + zsd",1998.04,0.215
-"EGFR_zq95","EGFR_5nm_Median + zq95",1998.85,0.21
-"Datt3_zq95_zsd","Datt3_1nm_Median + zq95 + zsd",2013.51,0.184
-"EGFR_only","EGFR_5nm_Median",2024.59,0.153
-"zq95_only","zq95",2036.33,0.128
-"structural_only","zmax + zsd + rugosity",2038.7,0.132
-"zmax_only","zmax",2041.15,0.118
-"Datt3_only","Datt3_1nm_Median",2053.35,0.09
-"rugosity_only","rugosity",2081.09,0.025
+"Model","Formula","AIC","PseudoR2","Pinball"
+"EGFR_zq95","EGFR_5nm_Median + zq95",1830.47,0.413,8.604
+"EGFR_zq95_zsd","EGFR_5nm_Median + zq95 + zsd",1830.81,0.416,8.568
+"EGFR_all_structural","EGFR_5nm_Median + zq95 + zsd + rugosity",1831.88,0.417,8.548
+"Datt3_all_structural","Datt3_1nm_Median + zq95 + zsd + rugosity",1849.05,0.392,8.922
+"Datt3_zq95_zsd","Datt3_1nm_Median + zq95 + zsd",1855.41,0.379,9.109
+"Datt3_zq95","Datt3_1nm_Median + zq95",1855.52,0.376,9.157
+"zq95_only","zq95",1874.24,0.343,9.641
+"structural_only","zq95 + zsd + rugosity",1875.12,0.348,9.567
+"zmax_only","zmax",1882.5,0.329,9.841
+"EGFR_only","EGFR_5nm_Median",1964.92,0.176,12.081
+"rugosity_only","rugosity",1978.26,0.148,12.488
+"Datt3_only","Datt3_1nm_Median",2002.34,0.096,13.259

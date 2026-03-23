@@ -449,13 +449,34 @@ metrics_df <- metrics_df |>
 print(metrics_df)
 write.csv(metrics_df, "outputs/EGFR_age_metricsbytau.csv", row.names = FALSE)
 
-# Plot
+# Nudge labels vertically so they sit above/below their line end
+label_df <- data.frame(
+  age_2     = max(struc_spec$age_2) * 0.93,
+  EGFR_pred = sapply(taus, function(tau) {
+    m <- rq(EGFR_5nm_Median ~ age_2, data = struc_spec, tau = tau)
+    predict(m, newdata = data.frame(age_2 = max(struc_spec$age_2) * 0.93))
+  }),
+  tau       = as.factor(taus),
+  label     = paste0("R1=", metrics_df$R1),
+  nudge_y   = c(-0.25, -0.25, -0.25, 0.15, 0.15),
+  nudge_x   = 5  # adjust this value to taste
+)
+
+# Then in geom_text, use the nudge_y column
+geom_text(data = label_df, aes(x = age_2, y = EGFR_pred + nudge_y,
+                               label = label, color = tau),
+          hjust = 0.5, size = 3.2, show.legend = FALSE)
+
+# Plot with R1 labels
 p <- ggplot() +
   geom_point(data = struc_spec, aes(x = age_2, y = EGFR_5nm_Median),
              alpha = 0.4, size = 1.5) +
-  geom_line(data = pred_df, aes(x = age_2, y = EGFR_pred, 
-                                color = tau, linetype = tau), 
+  geom_line(data = pred_df, aes(x = age_2, y = EGFR_pred,
+                                color = tau, linetype = tau),
             linewidth = 0.9) +
+  geom_text(data = label_df, aes(x = age_2 + nudge_x, y = EGFR_pred + nudge_y,
+                                 label = label, color = tau),
+            hjust = 0.5, size = 3.2, show.legend = FALSE) +
   scale_color_manual(values = c("0.1"  = "#2166ac",
                                 "0.25" = "#74add1",
                                 "0.5"  = "#000000",
@@ -471,12 +492,123 @@ p <- ggplot() +
   labs(x     = "Tree Age",
        y     = "EGFR 5nm Median",
        title = "Quantile Regression: Tree Age vs. EGFR") +
-  theme_bw(base_size = 14)
+  coord_cartesian(clip = "off") +
+  theme_bw(base_size = 14) +
+  theme(plot.margin = margin(5, 40, 5, 5))
 
-ggsave("outputs/EGFR_age_quantreg.png", plot = p,
+p
+
+ggsave("outputs/EGFR_age_quantreg_labels.png", plot = p,
        width = 8, height = 6, units = "in", dpi = 300)
 
-#### LICHEN 90TH QUANTILE APPROACH + TESTS MULTIPLE MODELS ####
+#### Continuous binning model + model metrics + plot - AGE AS RESPONSE VARIABLE ###
+library(quantreg)
+library(ggplot2)
+
+taus <- c(0.10, 0.25, 0.50, 0.75, 0.90)
+
+# age as response, EGFR as predictor
+qr_continuous_flip <- rq(age_2 ~ EGFR_5nm_Median,
+                         data = struc_spec,
+                         tau  = taus)
+
+# Build prediction dataframe across the full EGFR range
+EGFR_seq <- data.frame(EGFR_5nm_Median = seq(min(struc_spec$EGFR_5nm_Median),
+                                             max(struc_spec$EGFR_5nm_Median),
+                                             length.out = 200))
+
+# Get predicted age at each tau across the EGFR sequence
+pred_list_flip <- lapply(taus, function(tau) {
+  m <- rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = tau)
+  data.frame(EGFR_5nm_Median = EGFR_seq$EGFR_5nm_Median,
+             age_pred        = predict(m, newdata = EGFR_seq),
+             tau             = as.factor(tau))
+})
+pred_df_flip <- do.call(rbind, pred_list_flip)
+
+# Fit each tau separately for metrics
+models_by_tau_flip <- lapply(taus, function(tau) {
+  rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = tau)
+})
+names(models_by_tau_flip) <- paste0("tau_", taus)
+
+# Null models
+null_by_tau_flip <- lapply(taus, function(tau) {
+  rq(age_2 ~ 1, data = struc_spec, tau = tau)
+})
+
+# Extract AIC and R1
+metrics_df_flip <- data.frame(
+  tau      = taus,
+  AIC      = sapply(models_by_tau_flip, AIC),
+  R1       = mapply(function(m, n) 1 - m$rho / n$rho, models_by_tau_flip, null_by_tau_flip),
+  coef_int = sapply(models_by_tau_flip, function(m) coef(m)[1]),
+  coef_EGFR = sapply(models_by_tau_flip, function(m) coef(m)[2])
+)
+metrics_df_flip <- metrics_df_flip |>
+  mutate(across(c(AIC, R1, coef_int, coef_EGFR), ~ round(.x, 3)))
+
+print(metrics_df_flip)
+write.csv(metrics_df_flip, "outputs/EGFR_age_metricsbytau_ageisy.csv", row.names = FALSE)
+
+# ── Toggle R1 labels on/off ────────────────────────────────────────────────────
+show_r1_labels <- TRUE  # set to FALSE to hide labels
+
+# Label dataframe
+label_df_flip <- data.frame(
+  EGFR_5nm_Median = max(struc_spec$EGFR_5nm_Median) * 0.93,
+  age_pred        = sapply(taus, function(tau) {
+    m <- rq(age_2 ~ EGFR_5nm_Median, data = struc_spec, tau = tau)
+    predict(m, newdata = data.frame(EGFR_5nm_Median = max(struc_spec$EGFR_5nm_Median) * 0.93))
+  }),
+  tau     = as.factor(taus),
+  label   = paste0("R1=", metrics_df_flip$R1),
+  nudge_y = c(-8, -8, 9, -8, -6),
+  nudge_x = 0
+)
+
+# Plot
+p_flip <- ggplot() +
+  geom_point(data = struc_spec, aes(x = EGFR_5nm_Median, y = age_2),
+             alpha = 0.4, size = 1.5) +
+  geom_line(data = pred_df_flip, aes(x = EGFR_5nm_Median, y = age_pred,
+                                     color = tau, linetype = tau),
+            linewidth = 0.9) +
+  scale_color_manual(values = c("0.1"  = "#2166ac",
+                                "0.25" = "#74add1",
+                                "0.5"  = "#000000",
+                                "0.75" = "#f46d43",
+                                "0.9"  = "#d73027"),
+                     name = "Quantile") +
+  scale_linetype_manual(values = c("0.1"  = "dashed",
+                                   "0.25" = "dotdash",
+                                   "0.5"  = "solid",
+                                   "0.75" = "dotdash",
+                                   "0.9"  = "dashed"),
+                        name = "Quantile") +
+  labs(x     = "EGFR 5nm Median",
+       y     = "Tree Age",
+       title = "Quantile Regression: EGFR vs. Tree Age") +
+  coord_cartesian(clip = "off") +
+  theme_bw(base_size = 14) +
+  theme(plot.margin = margin(5, 40, 5, 5))
+
+# Conditionally add labels
+if (show_r1_labels) {
+  p_flip <- p_flip +
+    geom_text(data = label_df_flip, aes(x = EGFR_5nm_Median + nudge_x, y = age_pred + nudge_y,
+                                        label = label, color = tau),
+              hjust = 0.5, size = 3.2, show.legend = FALSE)
+}
+
+p_flip
+ggsave("outputs/EGFR_age_quantreg_labels_ageisy.png", plot = p_flip,
+       width = 8, height = 6, units = "in", dpi = 300)
+
+
+### Export tables to .pngs and make them look prety ##
+
+#### QUANT REG 50TH QUANTILE APPROACH (MEDIAN) + TESTS MULTIPLE MODELS ####
 library(quantreg)
 library(tidyverse)
 
@@ -484,94 +616,251 @@ library(tidyverse)
 XVAR <- c(
   "EGFR_5nm_Median",
   "EGFR_5nm_Median + zq95",
-  "EGFR_5nm_Median + zq95 + zsd + rugosity",
   "EGFR_5nm_Median + zq95 + zsd",
-  "zmax + zsd + rugosity",
+  "EGFR_5nm_Median + zq95 + zsd + rugosity",
+  "zq95 + zsd + rugosity",
   "zq95",
   "zmax",
   "rugosity",
   "Datt3_1nm_Median",
-  "Datt3_1nm_Median + zq95 + zsd"
+  "Datt3_1nm_Median + zq95",
+  "Datt3_1nm_Median + zq95 + zsd",
+  "Datt3_1nm_Median + zq95 + zsd + rugosity"
 )
 
 XVAR_names <- c(
   "EGFR_only",
   "EGFR_zq95",
-  "EGFR_full_structural",
   "EGFR_zq95_zsd",
+  "EGFR_all_structural",
   "structural_only",
   "zq95_only",
   "zmax_only",
   "rugosity_only",
   "Datt3_only",
-  "Datt3_zq95_zsd"
+  "Datt3_zq95",
+  "Datt3_zq95_zsd",
+  "Datt3_all_structural"
 )
 
-# ── 2. Fit all models at tau = 0.90 ───────────────────────────────────────────
+# ── 2. Fit all models at tau = 0.5 ───────────────────────────────────────────
 formulas <- lapply(paste("age_2 ~", XVAR), as.formula)
-models   <- lapply(formulas, function(f) rq(f, tau = 0.90, data = struc_spec))
+models   <- lapply(formulas, function(f) rq(f, tau = 0.50, data = struc_spec))
 names(models) <- XVAR_names
 
 # ── 3. Null model for pseudo-R² ───────────────────────────────────────────────
-null_model <- rq(age_2 ~ 1, tau = 0.90, data = struc_spec)
+null_model <- rq(age_2 ~ 1, tau = 0.50, data = struc_spec)
 
 # ── 4. Pseudo-R² (R1) and AIC for each model ──────────────────────────────────
 pseudo_r2 <- sapply(models, function(m) 1 - m$rho / null_model$rho)
 aic_vals  <- sapply(models, AIC)
 
+pinball_50 <- function(model) {
+  resid <- struc_spec$age_2 - predict(model)
+  mean(ifelse(resid >= 0, 0.50 * resid, (0.50 - 1) * resid))
+}
+pinball_vals <- sapply(models, pinball_50)
+
 model_comparison <- data.frame(
-  Model     = XVAR_names,
-  Formula   = XVAR,
-  AIC       = round(aic_vals, 2),
-  PseudoR2  = round(pseudo_r2, 3)
+  Model    = XVAR_names,
+  Formula  = XVAR,
+  AIC      = round(aic_vals, 2),
+  PseudoR2 = round(pseudo_r2, 3),
+  Pinball  = round(pinball_vals, 3)
 ) |> arrange(AIC)
 
 print(model_comparison)
 write.csv(model_comparison, "outputs/age_quantreg_modelcomparison.csv", row.names = FALSE)
 
-# ── 5. Bootstrapped confidence intervals for best model ───────────────────────
-# Replace "EGFR_full_structural" with whichever model wins above
+# ── 5. Coefficients + CIs for the best model ──────────────────────────────────
 best_model_name <- model_comparison$Model[1]
 best_model      <- models[[best_model_name]]
 
+best_model_summary <- summary(best_model, se = "boot", R = 1000)
+# Check the structure first
+print(best_model_summary$coefficients)
+
+# Robust extraction
+coef_raw <- as.data.frame(best_model_summary$coefficients)
+
+# Rename columns based on actual number of columns present
+if (ncol(coef_raw) == 4) {
+  colnames(coef_raw) <- c("Coefficient", "Lower_CI", "Upper_CI", "P_value")
+} else if (ncol(coef_raw) == 3) {
+  colnames(coef_raw) <- c("Coefficient", "Lower_CI", "Upper_CI")
+}
+
+coef_df <- tibble::rownames_to_column(coef_raw, var = "Term") |>
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+cat(sprintf("\nBest model: %s\n", best_model_name))
+cat(sprintf("Formula: age_2 ~ %s\n\n", model_comparison$Formula[1]))
+print(coef_df)
+
+write.csv(coef_df, "outputs/age_quantreg_bestmodel_coefs.csv", row.names = FALSE)
+
+# --- 6. Plot best model?? (TEST TEST TEST)
+# Generate predictions from best model
+struc_spec$age_predicted <- predict(best_model)
+struc_spec$residual       <- struc_spec$age_2 - struc_spec$age_predicted
+
+# Prediction intervals via bootstrapped CI
 pred_ci <- predict(best_model, struc_spec,
-                   interval  = "confidence",
-                   level     = 0.95,
-                   type      = "percentile",
-                   se        = "boot",
-                   R         = 1000)  # bootstrap resamples
+                   interval = "confidence",
+                   level    = 0.95,
+                   type     = "percentile",
+                   se       = "boot",
+                   R        = 1000)
 
-pred_df_2 <- cbind(struc_spec, as.data.frame(pred_ci))
-# pred_df now has columns: fit, lower, higher
+pred_df_obs <- data.frame(
+  observed  = struc_spec$age_2,
+  predicted = as.numeric(pred_ci[, "fit"]),
+  lower     = as.numeric(pred_ci[, "lower"]),
+  upper     = as.numeric(pred_ci[, "higher"]),
+  EGFR      = struc_spec$EGFR_5nm_Median,
+  zq95      = struc_spec$zq95
+)
 
-# ── 6. Figure: age ~ EGFR with 90th quantile fit + CI ─────────────────────────
-tiff(paste0("outputs/EGFR_age_90th_quantile_", format(Sys.time(), "%y%d%m"), ".tiff"),
-     width = 1200, height = 1200, units = "px", pointsize = 24)
+# Pull R1 and pinball for annotation
+best_r1      <- round(pseudo_r2[best_model_name], 3)
+best_pinball <- round(pinball_vals[best_model_name], 3)
 
-plot(age_2 ~ EGFR_5nm_Median, data = struc_spec,
-     xlab = "EGFR 5nm Median",
-     ylab = "Tree Age",
-     cex.lab = 1.7, cex.axis = 1.7)
+# Plot
+p_obs <- ggplot(pred_df_obs, aes(x = observed, y = predicted)) +
+  geom_errorbar(aes(ymin = lower, ymax = upper),
+                alpha = 0.25, color = "grey50", width = 0) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  #geom_point(aes(color = EGFR), size = 2.5, alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0,
+              color = "red", linetype = "dashed", linewidth = 0.9) +
+  #scale_color_viridis_c(name = "EGFR 5nm\nMedian", option = "plasma") +
+  annotate("text", 
+           x = min(pred_df_obs$observed) + 5,
+           y = max(pred_df_obs$predicted) - 5,
+           label = paste0("R1 = ", best_r1, "\nPinball = ", best_pinball),
+           hjust = 0, size = 4) +
+  labs(x     = "Observed Age (years)",
+       y     = "Predicted Age (years)",
+       title = paste0("Observed vs Predicted Age — EGFR + zq95 Model")) +
+  theme_bw(base_size = 14) +
+  coord_equal()  # forces 1:1 aspect ratio so the dashed line is truly diagonal
 
-# Sort by predictor for clean line plotting
-pred_sorted <- pred_df_2[order(pred_df_2$EGFR_5nm_Median), ]
-points(pred_sorted$EGFR_5nm_Median, pred_sorted$fit,    col = "blue",  pch = 19)
-points(pred_sorted$EGFR_5nm_Median, pred_sorted$lower,  col = "black", pch = 4, cex = 0.25)
-points(pred_sorted$EGFR_5nm_Median, pred_sorted$higher, col = "black", pch = 4, cex = 0.25)
+p_obs
+ggsave("outputs/age_quantreg_obsvspred.png", plot = p_obs,
+       width = 7, height = 7, units = "in", dpi = 300)
 
-# Add pseudo-R² and model formula to plot
-best_r2 <- pseudo_r2[best_model_name]
-text(max(struc_spec$EGFR_5nm_Median) * 0.6,
-     max(struc_spec$age_2, na.rm = TRUE) * 0.95,
-     labels = paste0("R1 = ", round(best_r2, 3)), cex = 1.4)
-text(max(struc_spec$EGFR_5nm_Median) * 0.6,
-     max(struc_spec$age_2, na.rm = TRUE) * 0.88,
-     labels = model_comparison$Formula[1], cex = 0.9)
 
-legend("topright",
-       legend = c("Raw Data", "90th Quantile Fit", "95% Bootstrap CI"),
-       col    = c("black", "blue", "black"),
-       pch    = c(1, 19, 4))
+##### LME MODEL WITH WINNING QUANTREG MODEL #####
 
-dev.off()
+# Potentially accounts for spatial autocorrelation??
 
+library(lme4)
+lmm_check <- lmer(age_2 ~ EGFR_5nm_Median + zq95 + (1 | Site), data = struc_spec)
+summary(lmm_check)
+
+library(performance)  
+library(broom.mixed)  
+
+# ── 1. Fixed effects with confidence intervals ─────────────────────────────────
+fixed_ef <- as.data.frame(coef(summary(lmm_check)))
+fixed_ef <- tibble::rownames_to_column(fixed_ef, var = "Term")
+colnames(fixed_ef) <- c("Term", "Estimate", "SE", "t_value")
+
+# Add 95% confidence intervals (Wald)
+ci <- as.data.frame(confint(lmm_check, method = "Wald"))
+ci <- ci[rownames(ci) %in% fixed_ef$Term, ]
+ci <- tibble::rownames_to_column(ci, var = "Term")
+colnames(ci) <- c("Term", "CI_lower", "CI_upper")
+
+fixed_ef <- left_join(fixed_ef, ci, by = "Term") |>
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+# ── 2. Random effects variance ─────────────────────────────────────────────────
+rand_ef <- as.data.frame(VarCorr(lmm_check))
+rand_ef <- rand_ef |>
+  select(Groups = grp, Variance = vcov, SD = sdcor) |>
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+# ── 3. ICC ─────────────────────────────────────────────────────────────────────
+icc_val <- performance::icc(lmm_check)
+icc_df  <- data.frame(
+  ICC_adjusted  = round(icc_val$ICC_adjusted, 3),
+  ICC_unadjusted = round(icc_val$ICC_unadjusted, 3)
+)
+
+# ── 4. Model fit ───────────────────────────────────────────────────────────────
+fit_df <- data.frame(
+  REML      = round(REMLcrit(lmm_check), 2),
+  AIC       = round(AIC(lmm_check), 2),
+  BIC       = round(BIC(lmm_check), 2),
+  N_obs     = nobs(lmm_check),
+  N_sites   = ngrps(lmm_check)
+)
+
+# ── 5. Marginal and conditional R² ────────────────────────────────────────────
+# Marginal = variance explained by fixed effects only
+# Conditional = variance explained by fixed + random effects
+r2_vals <- performance::r2(lmm_check)
+r2_df   <- data.frame(
+  R2_marginal    = round(r2_vals$R2_marginal, 3),
+  R2_conditional = round(r2_vals$R2_conditional, 3)
+)
+
+# ── 6. Print all ──────────────────────────────────────────────────────────────
+cat("=== Fixed Effects ===\n");         print(fixed_ef)
+cat("\n=== Random Effects ===\n");      print(rand_ef)
+cat("\n=== ICC ===\n");                 print(icc_df)
+cat("\n=== Model Fit ===\n");           print(fit_df)
+cat("\n=== R² (Nakagawa & Schieleth) ===\n"); print(r2_df)
+
+# ── 7. Export ─────────────────────────────────────────────────────────────────
+write.csv(fixed_ef, "outputs/age_lme_fixed_effects.csv",  row.names = FALSE)
+write.csv(rand_ef,  "outputs/age_lme_random_effects.csv", row.names = FALSE)
+write.csv(cbind(fit_df, r2_df, icc_df), "outputs/age_lme_modelfit.csv", row.names = FALSE)
+
+#--- 8. Plot this guy?? ─────────────────────────────────────────────────────────────
+
+# ── Generate predictions ───────────────────────────────────────────────────────
+struc_spec$age_predicted_lme <- predict(lmm_check)
+
+pred_df_lme <- data.frame(
+  observed  = struc_spec$age_2,
+  predicted = struc_spec$age_predicted_lme,
+  site      = struc_spec$Site
+)
+
+# ── Model fit metrics for annotation ──────────────────────────────────────────
+r2_vals   <- performance::r2(lmm_check)
+icc_val   <- performance::icc(lmm_check)
+rmse_lme  <- round(sqrt(mean((pred_df_lme$observed - pred_df_lme$predicted)^2)), 2)
+r2_marg   <- round(r2_vals$R2_marginal, 3)
+r2_cond   <- round(r2_vals$R2_conditional, 3)
+icc_round <- round(icc_val$ICC_adjusted, 3)
+
+annot_text <- paste0(
+  "R² marginal = ",    r2_marg,   "\n",
+  "R² conditional = ", r2_cond,   "\n",
+  "ICC = ",            icc_round, "\n",
+  "RMSE = ",           rmse_lme,  " yrs"
+)
+
+# ── Plot ───────────────────────────────────────────────────────────────────────
+p_lme <- ggplot(pred_df_lme, aes(x = observed, y = predicted, color = site)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0,
+              color = "red", linetype = "dashed", linewidth = 0.9) +
+  annotate("text",
+           x     = min(pred_df_lme$observed) + 5,
+           y     = max(pred_df_lme$predicted) - 15,
+           label = annot_text,
+           hjust = 0, size = 3.8) +
+  labs(x     = "Observed Age (years)",
+       y     = "Predicted Age (years)",
+       color = "Site",
+       title = "LME: Observed vs Predicted Age - EGFR + zq95 Model") +
+  theme_bw(base_size = 14) +
+  coord_equal()
+
+p_lme
+ggsave("outputs/age_lme_obsvspred.png", plot = p_lme,
+       width = 7, height = 7, units = "in", dpi = 300)
