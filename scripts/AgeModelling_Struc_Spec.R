@@ -282,7 +282,7 @@ plot(df_lin$zmax, df_lin$age_2,
      pch = 16, col = "darkblue")
 abline(lm_age_zmax, col = "red", lwd = 2)
 
-########## QUANTILE REGRESSIONS ##################
+########## QUANTILE REGRESSIONS, TESTS + QR RANDOM FOREST ##################
 #install.packages("quantreg")
 #install.packages("quantregForest")
 #install.packages("ggplot2")
@@ -392,7 +392,7 @@ ggplot(diag_df, aes(x = predicted, y = residual)) +
        title = "QRF Residuals") +
   theme_bw()
 
-#### Continuous binning model + model metrics + plot ###
+#### EGFR VS. AGE: quant reg model metrics + plot ####
 
 library(quantreg)
 library(ggplot2)
@@ -501,7 +501,7 @@ p
 ggsave("outputs/EGFR_age_quantreg_labels.png", plot = p,
        width = 8, height = 6, units = "in", dpi = 300)
 
-#### Continuous binning model + model metrics + plot - AGE AS RESPONSE VARIABLE ###
+#### EGFR VS. AGE: quant reg model metrics + plot - AGE AS RESPONSE VARIABLE ####
 library(quantreg)
 library(ggplot2)
 
@@ -604,9 +604,6 @@ if (show_r1_labels) {
 p_flip
 ggsave("outputs/EGFR_age_quantreg_labels_ageisy.png", plot = p_flip,
        width = 8, height = 6, units = "in", dpi = 300)
-
-
-### Export tables to .pngs and make them look prety ##
 
 #### QUANT REG 50TH QUANTILE APPROACH (MEDIAN) + TESTS MULTIPLE MODELS ####
 library(quantreg)
