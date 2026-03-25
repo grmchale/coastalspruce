@@ -29,13 +29,13 @@ struc_spec <- struc_spec |> filter(!is.na(age))
 ################## RANDOM FOREST TO PREDICT AGE #################################
 
 # Random Forest for AGE (robust, repeated)
-# Inputs: struc_spec, spectral cols 7:790 + lidar cols "rugosity":"zpcum9"
+# Inputs: struc_spec, spectral cols 7:398 + lidar cols "rugosity":"zpcum9"
 # Output: ranked predictors by mean %IncMSE + stability
 
 library(randomForest)
 
 
-## 1) Build predictor matrix: spectral 7:790 and lidar rugosity:zpcum9
+## 1) Build predictor matrix: spectral 7:398 and lidar rugosity:zpcum9
 # spectral
 df <- struc_spec
 pmin <- 7

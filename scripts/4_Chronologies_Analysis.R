@@ -986,7 +986,7 @@ cat(sprintf("OOB   R² (mean ± sd): %.3f ± %.3f\n\n", mean(oob_r2),  sd(oob_r2
 # Write top predictors to disk
 write.csv(rf_age_summary, "./R_outputs/modelling/rf/age_prediction_rf/age_strongestpredictors.csv")
 
-# Attempt at LMEM
+###### Attempt at LME Model ########
 library(lme4)
 library(dplyr)
 
