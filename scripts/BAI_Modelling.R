@@ -192,7 +192,7 @@ struc_spec <- chrono_filt |> inner_join(lidar_metrics, by = "TreeID")
 # Remove crowns with no BAI 2024
 struc_spec <- struc_spec |> filter(!is.na(BAI_2024))
 
-## Spearman + Pearson correlation matrices - just medians
+###### Spearman + Pearson correlation matrices - just medians ######
 library(stringr)
 library(tidyr) 
 library(tibble)
@@ -461,6 +461,239 @@ print(model_summary)
 write.csv(model_summary, file.path(out_dir, "BAI2024_LMEmodel_comparison.csv"), row.names = FALSE)
 
 ##### Move forward with the best model ####
-top_model_lm <- lm(BAI_2024 ~ zpcum8 + Area_m2 + REPLE_5nm_Median, data = model_data)  # adjust predictors
-summary(top_model_lm)
+top_model <- lm(BAI_2024 ~ zpcum8 + Area_m2 + REPLE_5nm_Median, data = model_data)  # adjust predictors
+summary(top_model)
 
+top_model_lme <- lmer(BAI_2024 ~ zpcum8 + Area_m2 + REPLE_5nm_Median + (1 | Site),
+                      data = model_data, REML = FALSE)
+# # LRT: tests whether adding Site improves fit
+anova(top_model_lme, top_model) 
+
+install.packages("caret")
+library(boot)
+library(caret)
+
+# --- 1. LOOCV ---
+loocv_control <- trainControl(method = "LOOCV")
+
+loocv_model <- train(BAI_2024 ~ zpcum8 + Area_m2 + REPLE_5nm_Median,
+                     data      = model_data,
+                     method    = "lm",
+                     trControl = loocv_control)
+
+loocv_results <- data.frame(
+  LOOCV_RMSE  = round(loocv_model$results$RMSE, 2),
+  LOOCV_R2    = round(loocv_model$results$Rsquared, 3),
+  LOOCV_MAE   = round(loocv_model$results$MAE, 2)
+)
+
+cat("=== LOOCV Results ===\n")
+print(loocv_results)
+
+# --- 2. Bootstrapping ---
+set.seed(123)
+n_boot <- 1000  # 1000 iterations is standard
+
+# Bootstrap function — returns coefficients + R²
+boot_fn <- function(data, indices) {
+  d    <- data[indices, ]
+  fit  <- lm(BAI_2024 ~ zpcum8 + Area_m2 + REPLE_5nm_Median, data = d)
+  r2   <- summary(fit)$r.squared
+  coefs <- coef(fit)
+  return(c(coefs, R2 = r2))
+}
+
+boot_results <- boot(data      = model_data,
+                     statistic = boot_fn,
+                     R         = n_boot)
+
+# --- 3. Coefficient confidence intervals (BCa - bias corrected) ---
+cat("\n=== Bootstrap Coefficient CIs (BCa, 95%) ===\n")
+coef_names <- c("Intercept", "zpcum8", "Area_m2", "REPLE_5nm_Median", "R2")
+
+boot_ci_df <- do.call(rbind, lapply(seq_along(coef_names), function(i) {
+  ci <- boot.ci(boot_results, type = "bca", index = i)
+  data.frame(
+    Parameter = coef_names[i],
+    Estimate  = round(boot_results$t0[i], 4),
+    CI_lower  = round(ci$bca[4], 4),
+    CI_upper  = round(ci$bca[5], 4)
+  )
+}))
+
+print(boot_ci_df)
+
+# --- 4. Export ---
+write.csv(boot_ci_df,    file.path(out_dir, "BAI2024_LM_bootstrap_CIs.csv"),    row.names = FALSE)
+write.csv(loocv_results, file.path(out_dir, "BAI2024_LM_LOOCV_results.csv"),    row.names = FALSE)
+
+#### Create plots for best model ####
+install.packages("ggrepel")
+library(ggplot2)
+library(dplyr)
+library(ggrepel)  # for point labels if needed
+
+# --- Shared theme ---
+theme_bai <- function() {
+  theme_minimal(base_size = 13) +
+    theme(
+      text             = element_text(family = "serif"),
+      plot.title       = element_text(face = "bold", size = 14, margin = margin(b = 8)),
+      plot.subtitle    = element_text(size = 11, color = "gray40", margin = margin(b = 12)),
+      axis.title       = element_text(size = 12),
+      axis.text        = element_text(size = 10, color = "gray30"),
+      panel.grid.major = element_line(color = "gray90", linewidth = 0.4),
+      panel.grid.minor = element_blank(),
+      panel.border     = element_rect(color = "gray70", fill = NA, linewidth = 0.5),
+      legend.position  = "right",
+      legend.title     = element_text(size = 10, face = "bold"),
+      legend.text      = element_text(size = 9),
+      plot.margin      = margin(15, 15, 15, 15)
+    )
+}
+
+# Shared color palette for sites
+site_colors <- c(
+  "CC" = "#F8766D",  # salmon/red
+  "CE" = "#B79F00",  # olive/yellow
+  "FP" = "#00BA38",  # green
+  "GI" = "#00BFC4",  # teal
+  "HI" = "#619CFF",  # blue
+  "RI" = "#C77CFF"   # pink/purple
+)
+
+### FIGURE 1 — Observed vs. Predicted
+
+model_data$Predicted <- predict(top_model)
+model_data$Residual  <- residuals(top_model)
+
+# Annotation text
+r2_label    <- paste0("R² = ", round(summary(top_model)$r.squared, 3))
+loocv_label <- paste0("LOOCV R² = 0.483")
+rmse_label  <- paste0("RMSE = 413 mm²") # RMSE from LOOCV analysis
+
+fig1 <- ggplot(model_data, aes(x = Predicted, y = BAI_2024, color = Site)) +
+  geom_abline(slope = 1, intercept = 0,
+              color = "red", linetype = "dashed", linewidth = 0.9) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  annotate("text",
+           x     = min(model_data$Predicted) + 50,
+           y     = max(model_data$BAI_2024) - 100,
+           label = paste0("R² = ", round(summary(top_model)$r.squared, 3),
+                          "\nLOOCV R² = 0.483",
+                          "\nRMSE = 413 mm²"),
+           hjust = 0, size = 3.8) +
+  scale_color_manual(values = site_colors) +
+  labs(title = "Observed vs. Predicted BAI (2024)",
+       x     = "Predicted BAI (mm²)",
+       y     = "Observed BAI (mm²)",
+       color = "Site") +
+  theme_bw(base_size = 14)
+
+print(fig1)
+ggsave(file.path(out_dir, "BAI2024_obs_vs_pred.png"),
+       fig1, width = 7, height = 7, dpi = 300)
+
+### FIGURE 2 — Coefficient plot with bootstrap CIs
+
+# Standardize coefficients for comparability
+model_data_scaled <- model_data %>%
+  mutate(across(c(zpcum8, Area_m2, REPLE_5nm_Median), scale))
+
+top_model_scaled <- lm(BAI_2024 ~ zpcum8 + Area_m2 + REPLE_5nm_Median,
+                       data = model_data_scaled)
+
+# Bootstrap on scaled model
+boot_fn_scaled <- function(data, indices) {
+  d    <- data[indices, ]
+  fit  <- lm(BAI_2024 ~ zpcum8 + Area_m2 + REPLE_5nm_Median, data = d)
+  return(coef(fit))
+}
+
+set.seed(123)
+boot_scaled <- boot(data = model_data_scaled, statistic = boot_fn_scaled, R = 1000)
+
+# Extract CIs for predictors only (drop intercept)
+pred_labels <- c("zpcum8", "Area_m2", "REPLE_5nm_Median")
+coef_plot_df <- do.call(rbind, lapply(2:4, function(i) {
+  ci <- boot.ci(boot_scaled, type = "bca", index = i)
+  data.frame(
+    Parameter = pred_labels[i - 1],
+    Estimate  = boot_scaled$t0[i],
+    CI_lower  = ci$bca[4],
+    CI_upper  = ci$bca[5]
+  )
+})) %>%
+  mutate(Parameter = factor(Parameter,
+                            levels = c("zpcum8", "Area_m2", "REPLE_5nm_Median"),
+                            labels = c("zpcum8", "Area (m²)", "REPLE (5nm)")))
+
+fig2 <- ggplot(coef_plot_df, aes(x = Estimate, y = Parameter)) +
+  geom_vline(xintercept = 0, linetype = "dashed",
+             color = "gray50", linewidth = 0.7) +
+  geom_errorbarh(aes(xmin = CI_lower, xmax = CI_upper),
+                 height = 0.15, linewidth = 0.8, color = "gray40") +
+  geom_point(size = 4, color = "#2C7BB6") +
+  labs(title = "Standardized Coefficients with 95% Bootstrap CIs",
+       subtitle = "BCa bootstrap, n = 1000 iterations",
+       x     = "Standardized Coefficient",
+       y     = NULL) +
+  theme_bw(base_size = 14)
+
+print(fig2)
+ggsave(file.path(out_dir, "BAI2024_LMmodel_coefficients.png"),
+       fig2, width = 7, height = 4.5, dpi = 300)
+
+####### LINEAR REGRESSION PLOTS: VEG INDEX VS. BAI 2024 ###########
+library(stringr)
+# 0. Prep data (if needed)
+model_data <- struc_spec %>%
+  select(all_of(candidate_vars), BAI_2024, Site) %>%
+  filter(complete.cases(.))
+
+# 1. LM/scatterplot inputs
+vi_var <- "PRInorm_5nm_Median"   # change this to any VI column
+plot_title <- "2024 BAI vs. Normalized Photochemical Reflectance Index (PRInorm)"  # fully customizable
+
+vi_label <- vi_var |>
+  gsub("_Median", "", x = _) |>
+  gsub("_", " ", x = _)
+
+# 2. Fit linear regression
+lm_fit <- lm(as.formula(paste(vi_var, "~ BAI_2024")), data = model_data)
+
+# 3. Extract R² for annotation
+r2_label <- paste0("R² = ", round(summary(lm_fit)$r.squared, 3))
+
+# 4. Create scatterplot with regression line
+reg1 <- ggplot(model_data, aes(x = BAI_2024, y = .data[[vi_var]], color = Site)) +
+  geom_smooth(method = "lm",
+              se = FALSE,
+              color = "red",
+              linetype = "dashed",
+              linewidth = 0.9) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  annotate("text",
+           x = min(model_data$BAI_2024, na.rm = TRUE) + 0.05 * diff(range(model_data$BAI_2024, na.rm = TRUE)),
+           y = max(model_data[[vi_var]], na.rm = TRUE) - 0.05 * diff(range(model_data[[vi_var]], na.rm = TRUE)),
+           label = r2_label,
+           hjust = 0,
+           size = 3.8) +
+  scale_color_manual(values = site_colors) +
+  labs(title = plot_title,
+       x = "BAI (2024)",
+       y = vi_label,
+       color = "Site") +
+  theme_bw(base_size = 14)
+
+print(reg1)
+
+# 5. Save it
+vi_short <- paste(strsplit(vi_var, "_")[[1]][1:2], collapse = "_")
+ggsave(
+  filename = file.path("outputs", paste0("BAI2024_", vi_short, "_lm2.png")),
+  plot = reg1,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
