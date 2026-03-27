@@ -154,10 +154,17 @@ for (resolution in spectral_resolutions) {
 
 # Display results table
 print(results)
+# Export
+write.csv(results, file = "outputs/dendro_PLSR_CV_specres.csv", row.names = FALSE)
 
-### 4) PLSR GRAPH FOR CSHRINK ###
+###### 4) PLSRs WITH BEST PERFORMING SPEC LIBS #######
+
+
+
+### x) PLSR GRAPH FOR CSHRINK ###
 # Optimal number of components
-n_opt <- which.min(RMSEP(pls_cshrink)$val[1, , ])
+#n_opt <- which.min(RMSEP(pls_cshrink)$val[1, , ])
+n_opt <- which.min(RMSEP(pls_cshrink)$val[1, , 1]) - 1
 
 # Cross-validated predictions
 cshrink_cv_pred <- pls_cshrink$validation$pred[, , n_opt]
