@@ -21,7 +21,7 @@ complete_idx <- complete.cases(X, dendro_spectra$TWD_drone, dendro_spectra$cshri
 
 X <- X[complete_idx, ]
 
-### 1) PLSR FOR TWD_DRONE - TWD ON DAY OF DRONE FLIGHT ###
+### 1) PLSR FOR TWD_DRONE - TWD ON DAY OF DRONE FLIGHT (TEST) ###
 Y_twd <- dendro_spectra$TWD_drone[complete_idx]
 
 pls_twd <- plsr(
@@ -40,7 +40,7 @@ plot(R2(pls_twd), legendpos = "topright")
 # Predictions
 twd_pred <- predict(pls_twd, ncomp = which.min(RMSEP(pls_twd)$val[1, , ]))
 
-### 2) PLSR FOR CSHRINK - CONSECUTIVE DAYS PRE-FLIGHT OF NO NET GROWTH ###
+### 2) PLSR FOR CSHRINK - CONSECUTIVE DAYS PRE-FLIGHT OF NO NET GROWTH (TEST) ###
 Y_cshrink <- dendro_spectra$cshrink[complete_idx]
 
 pls_cshrink <- plsr(
@@ -157,43 +157,231 @@ print(results)
 # Export
 write.csv(results, file = "outputs/dendro_PLSR_CV_specres.csv", row.names = FALSE)
 
-###### 4) PLSRs WITH BEST PERFORMING SPEC LIBS #######
+###### 4) PLSRs WITH BEST PERFORMING SPEC LIB #######
+library(pls)
+library(caret)
+library(ggplot2)
 
+# ---- SETTINGS + DATA PREP ----
+TARGET_VAR     <- "cshrink"   # "TWD_drone" or "cshrink" or other
+RUN_PERMTEST   <- TRUE         # TRUE to run permutation test, FALSE to skip
+N_PERMS        <- 999           # number of permutations (if RUN_PERMTEST = TRUE)
+NCOMP_MAX      <- 7             # max components (sqrt of n ~ 7 for n=53)
+N_FOLDS        <- 10            # k for k-fold CV
+N_REPEATS_KFOLD <- 100           # number of CV repeats
+N_REPEATS_PERM <- 10            # number of permutation repeats
+SEED           <- 42            # 42 is the default!
 
+# Data prep
+#X <- dendro_spectra[, paste0("1nm_", 398:999)] (1 nm library instead)
+X <- dendro_spectra[, paste0("5nm_", seq(398, 999, by = 5))]
+complete_idx <- complete.cases(X, dendro_spectra[[TARGET_VAR]])
+X <- X[complete_idx, ]
+wavelengths <- as.numeric(gsub("5nm_", "", colnames(X)))
+Y <- dendro_spectra[[TARGET_VAR]][complete_idx]
+X_mat <- as.matrix(X)
 
-### x) PLSR GRAPH FOR CSHRINK ###
-# Optimal number of components
-#n_opt <- which.min(RMSEP(pls_cshrink)$val[1, , ])
-n_opt <- which.min(RMSEP(pls_cshrink)$val[1, , 1]) - 1
+cat("Modelling:", TARGET_VAR, "\n")
+cat("n =", length(Y), "\n")
 
-# Cross-validated predictions
-cshrink_cv_pred <- pls_cshrink$validation$pred[, , n_opt]
-
-# Observed values
-cshrink_obs <- Y_cshrink
-
-# CV R²
-r2_cv <- cor(cshrink_obs, cshrink_cv_pred)^2
-
-# RMSEP
-rmsep_cv <- RMSEP(pls_cshrink)$val[1, n_opt + 1, 1]
-
-# Plot
-plot(
-  cshrink_obs,
-  cshrink_cv_pred,
-  pch = 16,
-  xlab = "Observed cshrink",
-  ylab = "PLSR-predicted cshrink (CV)",
-  main = paste0(
-    "PLSR Prediction of cshrink (", n_opt, " components)\n",
-    "CV R² = ", round(r2_cv, 2),
-    ", RMSEP = ", round(rmsep_cv, 2),
-    ", n = ", length(cshrink_obs)
-  )
+# ---- REPEATED K-FOLD CV ----
+set.seed(SEED)
+ctrl <- trainControl(
+  method = "repeatedcv",
+  number = N_FOLDS,
+  repeats = N_REPEATS_KFOLD,
+  savePredictions = "final"
 )
-abline(0, 1, lwd = 2, lty = 2)
-abline(lm(cshrink_cv_pred ~ cshrink_obs), col = "black")
+
+pls_model <- train(
+  x = X_mat,
+  y = Y,
+  method = "pls",
+  tuneGrid = data.frame(ncomp = 1:NCOMP_MAX),
+  trControl = ctrl,
+  preProcess = "scale"
+)
+
+# Select optimal components
+n_opt <- pls_model$bestTune$ncomp
+cat("Optimal ncomp:", n_opt, "\n")
+
+# Cross validation metrics
+cv_preds <- pls_model$pred[pls_model$pred$ncomp == n_opt, ]
+
+rmsep_cv <- sqrt(mean((cv_preds$obs - cv_preds$pred)^2))
+r2_cv    <- cor(cv_preds$obs, cv_preds$pred)^2
+bias_cv  <- mean(cv_preds$pred - cv_preds$obs)
+rpd_cv   <- sd(Y) / rmsep_cv
+
+cat("\n--- CV Metrics ---\n")
+cat("RMSEP:", round(rmsep_cv, 4), "\n")
+cat("R²:   ", round(r2_cv, 4), "\n")
+cat("Bias: ", round(bias_cv, 4), "\n")
+cat("RPD:  ", round(rpd_cv, 4), "\n")
+
+# REFIT FINAL MODEL ON ALL DATA
+pls_final <- plsr(
+  Y ~ X_mat,
+  ncomp = n_opt,
+  scale = TRUE,
+  validation = "none"
+)
+
+# Variable importance scores
+vip_func <- function(model, ncomp) {
+  W <- model$loading.weights[, 1:ncomp, drop = FALSE]
+  Q <- matrix(model$Yloadings[1:ncomp], nrow = ncomp)  # force matrix for single response
+  T <- model$scores[, 1:ncomp, drop = FALSE]
+  
+  SS <- as.vector(Q^2) * colSums(T^2)
+  W_norm <- W / sqrt(colSums(W^2))
+  
+  vip <- sqrt(nrow(W) * rowSums(W_norm^2 %*% diag(SS)) / sum(SS))
+  return(vip)
+}
+
+vip_scores <- vip_func(pls_final, ncomp = n_opt)
+length(vip_scores)  # should be 121
+
+# (Optional) permutation test
+if (RUN_PERMTEST) {
+  
+  # Separate lightweight ctrl for permutations
+  ctrl_perm <- trainControl(
+    method = "repeatedcv",
+    number = N_FOLDS,
+    repeats = N_REPEATS_PERM,              
+    savePredictions = "final"
+  )
+  
+  cat("\nRunning permutation test (", N_PERMS, "permutations)...\n")
+  set.seed(SEED)
+  perm_r2 <- numeric(N_PERMS)
+  
+  for (i in 1:N_PERMS) {
+    Y_perm <- sample(Y)
+    pls_perm <- train(
+      x = X_mat,
+      y = Y_perm,
+      method = "pls",
+      tuneGrid = data.frame(ncomp = n_opt),
+      trControl = ctrl_perm,     # <-- uses lighter ctrl, not the main one
+      preProcess = "scale"
+    )
+    preds_perm <- pls_perm$pred
+    perm_r2[i] <- cor(preds_perm$obs, preds_perm$pred)^2
+  }
+  
+  p_val <- mean(perm_r2 >= r2_cv)
+  cat("Permutation test p-value:", p_val, "\n")
+  
+  # Permutation null distribution plot
+  hist(perm_r2,
+       main = paste("Permutation Test -", TARGET_VAR),
+       xlab = "Permuted R²",
+       breaks = 30,
+       col = "lightgrey")
+  abline(v = r2_cv, col = "red", lwd = 2)
+  legend("topright", legend = paste("Observed R² =", round(r2_cv, 3)),
+         col = "red", lwd = 2)
+} else {
+  p_val <- NA
+}
+
+# ---- PLOTS ----
+
+# Observed vs predicted
+p_obs <- ggplot(cv_preds, aes(x = obs, y = pred)) +
+  geom_abline(slope = 1, intercept = 0,
+              color = "red", linetype = "dashed", linewidth = 0.9) +
+  geom_point(size = 2.5, alpha = 0.8, shape = 21, fill = NA, color = "black") +
+  annotate("text",
+           x     = min(cv_preds$obs),
+           y     = max(cv_preds$pred),
+           label = paste0("R² = ", round(r2_cv, 3),
+                          "\nRMSEP = ", round(rmsep_cv, 3),
+                          "\nRPD = ", round(rpd_cv, 3)),
+           hjust = 0, vjust = 1, size = 3.8) +
+  labs(title = paste(TARGET_VAR, "- Observed vs Predicted (Repeated k-fold CV)"),
+       x = paste("Observed", TARGET_VAR),
+       y = paste("Predicted", TARGET_VAR)) +
+  theme_bw(base_size = 14)
+print(p_obs)
+
+# VIP scores
+vip_df <- data.frame(Wavelength = wavelengths, VIP = vip_scores)
+
+p_vip <- ggplot(vip_df, aes(x = Wavelength, y = VIP)) +
+  geom_line(linewidth = 0.8) +
+  geom_hline(yintercept = 1, color = "red",
+             linetype = "dashed", linewidth = 0.9) +
+  labs(title = paste("VIP Scores -", TARGET_VAR),
+       x = "Wavelength (nm)",
+       y = "VIP Score") +
+  theme_bw(base_size = 14)
+print(p_vip)
+
+# Permutation test
+if (RUN_PERMTEST) {
+  perm_df <- data.frame(perm_r2 = perm_r2)
+  
+  p_perm <- ggplot(perm_df, aes(x = perm_r2)) +
+    geom_histogram(bins = 30, fill = "lightgrey", color = "white") +
+    geom_vline(xintercept = r2_cv, color = "red",
+               linetype = "solid", linewidth = 0.9) +
+    annotate("text",
+             x     = r2_cv,
+             y     = Inf,
+             label = paste0("Observed R² = ", round(r2_cv, 3)),
+             hjust = 1.2, vjust = 4, size = 3.8, color = "red") +
+    labs(title = paste("Permutation Test -", TARGET_VAR),
+         x = "Permuted R²",
+         y = "Frequency") +
+    theme_bw(base_size = 14)
+  print(p_perm)
+}
+
+# ---- RESULTS TABLE ----
+results_row <- data.frame(
+  Library        = "5nm",
+  Predictor      = TARGET_VAR,
+  nComp_optimal  = n_opt,
+  RMSEP_CV       = rmsep_cv,
+  R2_CV          = r2_cv,
+  Bias           = bias_cv,
+  RPD            = rpd_cv,
+  Perm_p         = p_val
+)
+print(results_row)
+
+# ---- EXPORT ----
+# Model metrics
+write.csv(results_row,
+          file = paste0("outputs/dendro_PLSR_results_", TARGET_VAR, ".csv"),
+          row.names = FALSE)
+
+# Observed vs predicted values
+write.csv(data.frame(Observed = cv_preds$obs, Predicted = cv_preds$pred),
+          file = paste0("outputs/dendro_PLSR_obs_vs_pred_", TARGET_VAR, ".csv"),
+          row.names = FALSE)
+
+# VIP scores
+write.csv(vip_df,
+          file = paste0("outputs/dendro_PLSR_VIP_", TARGET_VAR, ".csv"),
+          row.names = FALSE)
+
+# Plots
+ggsave(paste0("outputs/dendro_PLSR_obs_vs_pred_", TARGET_VAR, ".png"),
+       plot = p_obs, width = 7, height = 7, dpi = 300)
+
+ggsave(paste0("outputs/dendro_PLSR_VIP_", TARGET_VAR, ".png"),
+       plot = p_vip, width = 10, height = 5, dpi = 300)
+
+if (RUN_PERMTEST) {
+  ggsave(paste0("outputs/dendro_PLSR_permtest_", TARGET_VAR, ".png"),
+         plot = p_perm, width = 7, height = 6, dpi = 300)
+}
 
 #############################################################################
 ################ RF MODELS TO PREDICT DENDRO ATTRIBUTES ######################
