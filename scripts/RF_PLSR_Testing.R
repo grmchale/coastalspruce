@@ -10,7 +10,96 @@ dendro_spectra <- read.csv(
 
 ##############################################################################
 ################# PLSR MODELS TO PREDICT DENDRO ATTRIBUTES ####################
-#install.packages("pls")
+
+#### 1) Try smoothing and cutting off spectra north of 850 nm ####
+
+#### 1a) Smoothing with Savitsky-Golay (SG) ####
+#install.packages("signal")
+library(signal)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+## Editable parameters
+# Choose spectral library: "1nm" or "5nm"
+spectral_res <- "1nm"
+
+# SG paramters
+sg_window <- 21       # Must be odd (11 is a suitable starting size)
+sg_poly   <- 2        # Polynomial order (must be < sg_window, 3 is a suitable starting size)
+
+# Rows to plot (pick 1 or 2 integers from 1–53)
+plot_rows <- c(1)
+
+## Setup for SG
+# Build spectral column names based on chosen resolution
+if (spectral_res == "1nm") {
+  spec_cols <- paste0("1nm_", 398:999)
+} else if (spectral_res == "5nm") {
+  spec_cols <- paste0("5nm_", seq(398, 999, by = 5))
+} else {
+  stop("spectral_res must be '1nm' or '5nm'")
+}
+# Extract spectral matrix
+spectra_matrix <- as.matrix(dendro_spectra[, spec_cols])
+
+## Smoothing with SG!
+# Apply SG filter row-wise
+sg_filter    <- sgolay(p = sg_poly, n = sg_window)
+smoothed_matrix <- t(apply(spectra_matrix, 1, function(row) sgolayfilt(row, sg_filter)))
+
+# Name smoothed columns
+smoothed_cols <- paste0(spec_cols, "_sg")
+colnames(smoothed_matrix) <- smoothed_cols
+
+# Drop any previously appended SG columns before re-appending
+sg_cols_to_remove <- grepl("_sg$", colnames(dendro_spectra))
+if (any(sg_cols_to_remove)) {
+  dendro_spectra <- dendro_spectra[, !sg_cols_to_remove]
+}
+# Append smoothed columns to original dataframe
+dendro_spectra <- cbind(dendro_spectra, as.data.frame(smoothed_matrix))
+
+## Plot smoothing results
+# Extract wavelengths from column names
+wavelengths <- as.numeric(
+  gsub(paste0(spectral_res, "_"), "", spec_cols)
+)
+
+# Build long-format data for selected rows
+plot_data <- lapply(plot_rows, function(i) {
+  data.frame(
+    wavelength = wavelengths,
+    original   = spectra_matrix[i, ],
+    smoothed   = smoothed_matrix[i, ],
+    sample     = paste0("Row ", i)
+  )
+}) |> bind_rows()
+
+plot_long <- plot_data |>
+  pivot_longer(cols = c(original, smoothed),
+               names_to  = "type",
+               values_to = "reflectance")
+
+ggplot(plot_long, aes(x = wavelength, y = reflectance,
+                      color = type, linetype = type)) +
+  geom_line(linewidth = 0.7) +
+  facet_wrap(~ sample, ncol = 1) +
+  scale_color_manual(values = c(original = "steelblue", smoothed = "firebrick"),
+                     labels  = c(original = "Original", smoothed = "SG Smoothed")) +
+  scale_linetype_manual(values = c(original = "dashed", smoothed = "solid"),
+                        labels  = c(original = "Original", smoothed = "SG Smoothed")) +
+  labs(
+    title    = paste0("Savitzky-Golay Smoothing (", spectral_res, " library)"),
+    subtitle = paste0("Window = ", sg_window, ", Polynomial order = ", sg_poly),
+    x        = "Wavelength (nm)",
+    y        = "Reflectance",
+    color    = NULL, linetype = NULL
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+
+### 1c) Data prep!!!! ###
 library(pls)
 
 # Select spectral predictors - 1 nm spectral library
@@ -21,7 +110,7 @@ complete_idx <- complete.cases(X, dendro_spectra$TWD_drone, dendro_spectra$cshri
 
 X <- X[complete_idx, ]
 
-### 1) PLSR FOR TWD_DRONE - TWD ON DAY OF DRONE FLIGHT (TEST) ###
+#### 2a) PLSR FOR TWD_DRONE - TWD ON DAY OF DRONE FLIGHT (TEST) ####
 Y_twd <- dendro_spectra$TWD_drone[complete_idx]
 
 pls_twd <- plsr(
@@ -40,7 +129,7 @@ plot(R2(pls_twd), legendpos = "topright")
 # Predictions
 twd_pred <- predict(pls_twd, ncomp = which.min(RMSEP(pls_twd)$val[1, , ]))
 
-### 2) PLSR FOR CSHRINK - CONSECUTIVE DAYS PRE-FLIGHT OF NO NET GROWTH (TEST) ###
+#### 2b) PLSR FOR CSHRINK - CONSECUTIVE DAYS PRE-FLIGHT OF NO NET GROWTH (TEST) ####
 Y_cshrink <- dendro_spectra$cshrink[complete_idx]
 
 pls_cshrink <- plsr(
