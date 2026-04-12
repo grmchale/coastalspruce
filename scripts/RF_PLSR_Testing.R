@@ -21,11 +21,11 @@ library(tidyr)
 library(dplyr)
 ## Editable parameters
 # Choose spectral library: "1nm" or "5nm"
-spectral_res <- "1nm"
+spectral_res <- "5nm"
 
 # SG paramters
-sg_window <- 21       # Must be odd (11 is a suitable starting size)
-sg_poly   <- 2        # Polynomial order (must be < sg_window, 3 is a suitable starting size)
+sg_window <- 11       # Must be odd (11 is a suitable starting size)
+sg_poly   <- 3        # Polynomial order (must be < sg_window, 3 is a suitable starting size)
 
 # Rows to plot (pick 1 or 2 integers from 1–53)
 plot_rows <- c(1)
@@ -80,8 +80,8 @@ plot_long <- plot_data |>
                names_to  = "type",
                values_to = "reflectance")
 
-ggplot(plot_long, aes(x = wavelength, y = reflectance,
-                      color = type, linetype = type)) +
+sg_plot <- ggplot(plot_long, aes(x = wavelength, y = reflectance,
+                                 color = type, linetype = type)) +
   geom_line(linewidth = 0.7) +
   facet_wrap(~ sample, ncol = 1) +
   scale_color_manual(values = c(original = "steelblue", smoothed = "firebrick"),
@@ -98,6 +98,15 @@ ggplot(plot_long, aes(x = wavelength, y = reflectance,
   theme_bw() +
   theme(legend.position = "bottom")
 
+sg_plot
+
+ggsave(
+  filename = "outputs/dendro_savitzkygolay_11_3.png",
+  plot     = sg_plot,
+  width    = 8,
+  height   = 6,
+  dpi      = 300
+)
 
 ### 1c) Data prep!!!! ###
 library(pls)
@@ -252,21 +261,26 @@ library(caret)
 library(ggplot2)
 
 # ---- SETTINGS + DATA PREP ----
-TARGET_VAR     <- "cshrink"   # "TWD_drone" or "cshrink" or other
+TARGET_VAR     <- "TWD_drone"   # "TWD_drone" or "cshrink" or other
 RUN_PERMTEST   <- TRUE         # TRUE to run permutation test, FALSE to skip
-N_PERMS        <- 999           # number of permutations (if RUN_PERMTEST = TRUE)
+N_PERMS        <- 999           # number of permutations, 999 is good start, 10,000 is standard for publications (if RUN_PERMTEST = TRUE)
 NCOMP_MAX      <- 7             # max components (sqrt of n ~ 7 for n=53)
 N_FOLDS        <- 10            # k for k-fold CV
 N_REPEATS_KFOLD <- 100           # number of CV repeats
-N_REPEATS_PERM <- 10            # number of permutation repeats
+N_REPEATS_PERM <- 10            # number of CV repeats for the permutation
 SEED           <- 42            # 42 is the default!
 
-# Data prep
-#X <- dendro_spectra[, paste0("1nm_", 398:999)] (1 nm library instead)
-X <- dendro_spectra[, paste0("5nm_", seq(398, 999, by = 5))]
+## Data prep
+# Select which spectral libray to go with
+#X <- dendro_spectra[, paste0("1nm_", 398:999)] #(1 nm, not smoothed)
+#X <- dendro_spectra[, paste0("5nm_", seq(398, 999, by = 5))] #(5 nm, not smoothed)
+X <- dendro_spectra[, paste0("5nm_", seq(398, 898, by = 5), "_sg")] #(5nm, smoothed, removes > 900nm)
+
+# Clean up selected library
 complete_idx <- complete.cases(X, dendro_spectra[[TARGET_VAR]])
 X <- X[complete_idx, ]
-wavelengths <- as.numeric(gsub("5nm_", "", colnames(X)))
+#wavelengths <- as.numeric(gsub("5nm_", "", colnames(X))) # not smoothed columns
+wavelengths <- as.numeric(gsub("5nm_|_sg", "", colnames(X))) # smoothed columns
 Y <- dendro_spectra[[TARGET_VAR]][complete_idx]
 X_mat <- as.matrix(X)
 
@@ -331,7 +345,7 @@ vip_func <- function(model, ncomp) {
 }
 
 vip_scores <- vip_func(pls_final, ncomp = n_opt)
-length(vip_scores)  # should be 121
+length(vip_scores)  # should be 121 (for full 5nm library)
 
 # (Optional) permutation test
 if (RUN_PERMTEST) {
