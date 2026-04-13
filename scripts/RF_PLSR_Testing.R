@@ -261,7 +261,7 @@ library(caret)
 library(ggplot2)
 
 # ---- SETTINGS + DATA PREP ----
-TARGET_VAR     <- "TWD_drone"   # "TWD_drone" or "cshrink" or other
+TARGET_VAR     <- "cshrink"   # "TWD_drone" or "cshrink" or other
 RUN_PERMTEST   <- TRUE         # TRUE to run permutation test, FALSE to skip
 N_PERMS        <- 999           # number of permutations, 999 is good start, 10,000 is standard for publications (if RUN_PERMTEST = TRUE)
 NCOMP_MAX      <- 7             # max components (sqrt of n ~ 7 for n=53)
@@ -489,14 +489,258 @@ if (RUN_PERMTEST) {
 #############################################################################
 ################ RF MODELS TO PREDICT DENDRO ATTRIBUTES ######################
 # Filter out stats first before RF'ing
-dendro_clean <- dendro_spectra[
-  , !grepl("(Q75|Q25|Mean|SD)$", names(dendro_spectra))
-]
 
-library(randomForest)
+## READ IN SPECTRAL + STRUCTURAL DATA + CLEAN UP
+lidar_metrics <- readRDS("./data/lidar_metrics.rds")
+chrono <- readRDS("./data/chrono_VIstats_metrics.rds")
+# Dendrometer metrics
+dendro_spectra <- read.csv(
+  file = "./data/dendro_spectra_joined.csv",
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+library(dplyr)
+# Remove extraneous stat columns from dendro_spectra
+dendro_filt <- dendro_spectra %>%
+  select(-matches("(SD|Q25|Q75|Mean)$"))
+
+# Pull age, DBH, BAI_2024 from raw chrono + calculate age_2
+chrono_dendro <- chrono %>%
+  select(TreeID, age, DBH, BAI_2024) %>%
+  mutate(age_2 = 2024 - age)
+
+# Build RF dataframe
+model_df <- dendro_filt %>%
+  left_join(chrono_dendro,    by = "TreeID") %>%
+  left_join(lidar_metrics,  by = "TreeID")
+
+########## 1) RANDOM FOREST WITH STRUCTURAL + SPECTRAL INDICES ##############
+#install.packages("ranger")
+library(ranger)
 library(caret)
+library(ggplot2)
+library(dplyr)
 
-######### 1) RF BOOSTRAP LOOP FOR TWD_DRONE #################
+# ---- SETTINGS ----
+TARGET_VAR      <- "TWD_drone"   # "TWD_drone" or "cshrink"
+RUN_PERMTEST    <- FALSE        # TRUE to run permutation test, FALSE to skip
+N_PERMS         <- 999          # number of permutations (if RUN_PERMTEST = TRUE)
+N_FOLDS         <- 10           # k for k-fold CV
+N_REPEATS_KFOLD <- 100          # number of CV repeats
+N_REPEATS_PERM  <- 10           # number of CV repeats for permutation
+NUM_TREES       <- 500          # number of trees in the forest
+MTRY            <- NULL         # predictors sampled per split (NULL = default: p/3)
+TOP_N           <- 20           # number of top variables to show in importance plot
+SEED            <- 42
+
+# ---- DATA PREP ----
+
+# Select predictor columns
+rf_predictors <- model_df %>%
+  select(rugosity:Area_m2, DBH, ARI1_5nm_Median:Vogelmann4_5nm_Median) %>%
+  select(-any_of("zentropy")) # too many N/As
+
+X_rf <- rf_predictors
+Y_rf <- model_df[[TARGET_VAR]]
+
+# Remove incomplete cases
+complete_idx <- complete.cases(X_rf, Y_rf)
+X_rf <- X_rf[complete_idx, ]
+Y_rf <- Y_rf[complete_idx]
+
+cat("Modelling:", TARGET_VAR, "\n")
+cat("n =", length(Y_rf), "\n")
+cat("Predictors:", ncol(X_rf), "\n")
+
+# ---- REPEATED K-FOLD CV ----
+set.seed(SEED)
+
+mtry_val <- if (is.null(MTRY)) floor(ncol(X_rf) / 3) else MTRY
+
+ctrl <- trainControl(
+  method          = "repeatedcv",
+  number          = N_FOLDS,
+  repeats         = N_REPEATS_KFOLD,
+  savePredictions = "final"
+)
+
+rf_model <- train(
+  x         = X_rf,
+  y         = Y_rf,
+  method    = "ranger",
+  num.trees = NUM_TREES,
+  tuneGrid  = data.frame(
+    mtry              = mtry_val,
+    splitrule         = "variance",
+    min.node.size     = 5
+  ),
+  trControl  = ctrl,
+  importance = "impurity"
+)
+
+# CV predictions
+cv_preds <- rf_model$pred
+
+rmse_cv <- sqrt(mean((cv_preds$obs - cv_preds$pred)^2))
+r2_cv   <- cor(cv_preds$obs, cv_preds$pred)^2
+bias_cv <- mean(cv_preds$pred - cv_preds$obs)
+rpd_cv  <- sd(Y_rf) / rmse_cv
+
+cat("\n--- CV Metrics ---\n")
+cat("RMSE:", round(rmse_cv, 4), "\n")
+cat("R²:  ", round(r2_cv,   4), "\n")
+cat("Bias:", round(bias_cv,  4), "\n")
+cat("RPD: ", round(rpd_cv,   4), "\n")
+
+# ---- REFIT FINAL MODEL ON ALL DATA ----
+set.seed(SEED)
+rf_final <- ranger(
+  formula       = as.formula(paste(TARGET_VAR, "~ .")),
+  data          = cbind(X_rf, setNames(data.frame(Y_rf), TARGET_VAR)),
+  num.trees     = NUM_TREES,
+  mtry          = mtry_val,
+  importance    = "impurity",
+  min.node.size = 5
+)
+
+# Variable importance
+importance_df <- data.frame(
+  Variable   = names(rf_final$variable.importance),
+  Importance = rf_final$variable.importance
+) %>%
+  arrange(desc(Importance)) %>%
+  slice_head(n = TOP_N)
+
+# ---- OPTIONAL PERMUTATION TEST ----
+if (RUN_PERMTEST) {
+  
+  ctrl_perm <- trainControl(
+    method          = "repeatedcv",
+    number          = N_FOLDS,
+    repeats         = N_REPEATS_PERM,
+    savePredictions = "final"
+  )
+  
+  cat("\nRunning permutation test (", N_PERMS, "permutations)...\n")
+  set.seed(SEED)
+  perm_r2 <- numeric(N_PERMS)
+  
+  for (i in 1:N_PERMS) {
+    Y_perm   <- sample(Y_rf)
+    rf_perm  <- train(
+      x         = X_rf,
+      y         = Y_perm,
+      method    = "ranger",
+      num.trees = NUM_TREES,
+      tuneGrid  = data.frame(
+        mtry          = mtry_val,
+        splitrule     = "variance",
+        min.node.size = 5
+      ),
+      trControl  = ctrl_perm,
+      importance = "none"   # skip importance during perms for speed
+    )
+    preds_perm  <- rf_perm$pred
+    perm_r2[i] <- cor(preds_perm$obs, preds_perm$pred)^2
+  }
+  
+  p_val <- mean(perm_r2 >= r2_cv)
+  cat("Permutation test p-value:", p_val, "\n")
+  
+} else {
+  p_val <- NA
+}
+
+# ---- PLOTS ----
+
+# Observed vs predicted
+p_obs <- ggplot(cv_preds, aes(x = obs, y = pred)) +
+  geom_abline(slope = 1, intercept = 0,
+              color = "red", linetype = "dashed", linewidth = 0.9) +
+  geom_point(size = 2.5, alpha = 0.8, shape = 21,
+             fill = NA, color = "black") +
+  annotate("text",
+           x     = min(cv_preds$obs),
+           y     = max(cv_preds$pred),
+           label = paste0("R² = ",   round(r2_cv,   3),
+                          "\nRMSE = ", round(rmse_cv, 3),
+                          "\nRPD = ",  round(rpd_cv,  3)),
+           hjust = 0, vjust = 1, size = 3.8) +
+  labs(title = paste(TARGET_VAR, "- Observed vs Predicted (Repeated k-fold CV)"),
+       x     = paste("Observed", TARGET_VAR),
+       y     = paste("Predicted", TARGET_VAR)) +
+  theme_bw(base_size = 14)
+print(p_obs)
+
+# Variable importance bar chart
+p_imp <- ggplot(importance_df,
+                aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title    = paste("Top", TOP_N, "Variable Importance -", TARGET_VAR),
+       x        = NULL,
+       y        = "Importance (Impurity)") +
+  theme_bw(base_size = 14)
+print(p_imp)
+
+# Permutation test plot
+if (RUN_PERMTEST) {
+  perm_df <- data.frame(perm_r2 = perm_r2)
+  
+  p_perm <- ggplot(perm_df, aes(x = perm_r2)) +
+    geom_histogram(bins = 30, fill = "lightgrey", color = "white") +
+    geom_vline(xintercept = r2_cv, color = "red",
+               linetype = "solid", linewidth = 0.9) +
+    annotate("text",
+             x     = r2_cv,
+             y     = Inf,
+             label = paste0("Observed R² = ", round(r2_cv, 3)),
+             hjust = 1.2, vjust = 4, size = 3.8, color = "red") +
+    labs(title = paste("Permutation Test -", TARGET_VAR),
+         x     = "Permuted R²",
+         y     = "Frequency") +
+    theme_bw(base_size = 14)
+  print(p_perm)
+}
+
+# ---- RESULTS TABLE ----
+results_row <- data.frame(
+  Model      = "RandomForest",
+  Predictor  = TARGET_VAR,
+  RMSE_CV    = rmse_cv,
+  R2_CV      = r2_cv,
+  Bias       = bias_cv,
+  RPD        = rpd_cv,
+  Perm_p     = p_val
+)
+print(results_row)
+
+# ---- EXPORT ----
+write.csv(results_row,
+          file      = paste0("outputs/dendro_RF_results_", TARGET_VAR, ".csv"),
+          row.names = FALSE)
+
+write.csv(data.frame(Observed = cv_preds$obs, Predicted = cv_preds$pred),
+          file      = paste0("outputs/dendro_RF_obs_vs_pred_", TARGET_VAR, ".csv"),
+          row.names = FALSE)
+
+write.csv(importance_df,
+          file      = paste0("outputs/dendro_RF_importance_", TARGET_VAR, ".csv"),
+          row.names = FALSE)
+
+ggsave(paste0("outputs/dendro_RF_obs_vs_pred_", TARGET_VAR, ".png"),
+       plot = p_obs, width = 7, height = 7, dpi = 300)
+
+ggsave(paste0("outputs/dendro_RF_importance_", TARGET_VAR, ".png"),
+       plot = p_imp, width = 8, height = 6, dpi = 300)
+
+if (RUN_PERMTEST) {
+  ggsave(paste0("outputs/dendro_RF_permtest_", TARGET_VAR, ".png"),
+         plot = p_perm, width = 7, height = 6, dpi = 300)
+}
+
+######### 1b) RF BOOSTRAP LOOP FOR TWD_DRONE (TEST) #################
 library(randomForest)
 library(caret)  # for some helper functions if needed
 
