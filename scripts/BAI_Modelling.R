@@ -473,6 +473,43 @@ install.packages("caret")
 library(boot)
 library(caret)
 
+# --- 0. Distribution check ---
+vars_to_check_bai <- list(
+  BAI_2024          = model_data$BAI_2024,
+  zpcum8            = model_data$zpcum8,
+  Area_m2           = model_data$Area_m2,
+  REPLE_5nm_Median  = model_data$REPLE_5nm_Median
+)
+
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1))
+for (var_name in names(vars_to_check_bai)) {
+  x <- vars_to_check_bai[[var_name]]
+  hist(x, main = var_name, xlab = var_name, col = "lightgrey", breaks = 20)
+  qqnorm(x, main = paste("Q-Q:", var_name))
+  qqline(x, col = "red", lwd = 1.5)
+}
+par(mfrow = c(1, 1))
+
+# Export
+dev.copy(png, "outputs/BAI2024_distribution_checks_lm.png",
+         width = 8, height = 12, units = "in", res = 300)
+dev.off()
+
+# Residual diagnostics
+bai_resid <- residuals(top_model)
+
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+hist(bai_resid, main = "LM Residuals", xlab = "Residuals",
+     col = "lightgrey", breaks = 20)
+qqnorm(bai_resid, main = "Q-Q: LM Residuals")
+qqline(bai_resid, col = "red", lwd = 1.5)
+par(mfrow = c(1, 1))
+
+# Export
+dev.copy(png, "outputs/BAI2024_residual_checks_lm.png",
+         width = 8, height = 5, units = "in", res = 300)
+dev.off()
+
 # --- 1. LOOCV ---
 loocv_control <- trainControl(method = "LOOCV")
 

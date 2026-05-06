@@ -609,6 +609,36 @@ ggsave("outputs/EGFR_age_quantreg_labels_ageisy.png", plot = p_flip,
 library(quantreg)
 library(tidyverse)
 
+# -- 0. Distribution check (histogram + QQ plot)
+vars_to_check <- list(
+  age_2 = struc_spec$age_2,
+  EGFR  = struc_spec$EGFR_5nm_Median,
+  zq95  = struc_spec$zq95
+)
+
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+
+for (var_name in names(vars_to_check)) {
+  x <- vars_to_check[[var_name]]
+  hist(x, main = var_name, xlab = var_name, col = "lightgrey", breaks = 20)
+  qqnorm(x, main = paste("Q-Q:", var_name))
+  qqline(x, col = "red", lwd = 1.5)
+}
+
+png("outputs/age_distribution_checks.png", width = 8, height = 10,
+    units = "in", res = 300)
+
+par(mfrow = c(3, 2), mar = c(4, 4, 2, 1))
+for (var_name in names(vars_to_check)) {
+  x <- vars_to_check[[var_name]]
+  hist(x, main = var_name, xlab = var_name, col = "lightgrey", breaks = 20)
+  qqnorm(x, main = paste("Q-Q:", var_name))
+  qqline(x, col = "red", lwd = 1.5)
+}
+par(mfrow = c(1, 1))
+
+dev.off()
+
 # ── 1. Define candidate models 
 XVAR <- c(
   "EGFR_5nm_Median",
@@ -759,6 +789,21 @@ summary(lmm_check)
 
 library(performance)  
 library(broom.mixed)  
+
+# --- 0. Residual check!! ---
+lme_resid <- residuals(lmm_check)
+
+png("outputs/age_lme_residuals.png", width = 8, height = 5,
+    units = "in", res = 300)
+
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+hist(lme_resid, main = "LME Residuals", xlab = "Residuals",
+     col = "lightgrey", breaks = 20)
+qqnorm(lme_resid, main = "Q-Q: LME Residuals")
+qqline(lme_resid, col = "red", lwd = 1.5)
+par(mfrow = c(1, 1))
+
+dev.off()
 
 # ── 1. Fixed effects with confidence intervals ─────────────────────────────────
 fixed_ef <- as.data.frame(coef(summary(lmm_check)))
