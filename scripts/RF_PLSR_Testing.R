@@ -261,8 +261,10 @@ library(caret)
 library(ggplot2)
 
 # ---- SETTINGS + DATA PREP ----
-TARGET_VAR     <- "cshrink"   # "TWD_drone" or "cshrink" or other
-RUN_PERMTEST   <- TRUE         # TRUE to run permutation test, FALSE to skip
+TARGET_VAR     <- "TWD_drone"   # "TWD_drone" or "cshrink" or other
+AXIS_LABEL     <- "Daily TWD (μm)"  # descriptive label for plot titles and axes
+TITLE_LABEL    <- "Daily Tree Water Deficit"  # descriptive label for plot titles
+RUN_PERMTEST   <- FALSE         # TRUE to run permutation test, FALSE to skip
 N_PERMS        <- 999           # number of permutations, 999 is good start, 10,000 is standard for publications (if RUN_PERMTEST = TRUE)
 NCOMP_MAX      <- 7             # max components (sqrt of n ~ 7 for n=53)
 N_FOLDS        <- 10            # k for k-fold CV
@@ -283,6 +285,9 @@ X <- X[complete_idx, ]
 wavelengths <- as.numeric(gsub("5nm_|_sg", "", colnames(X))) # smoothed columns
 Y <- dendro_spectra[[TARGET_VAR]][complete_idx]
 X_mat <- as.matrix(X)
+
+# Extract site from TreeID (first two characters)
+site_labels <- substr(dendro_spectra$TreeID[complete_idx], 1, 2)
 
 cat("Modelling:", TARGET_VAR, "\n")
 cat("n =", length(Y), "\n")
@@ -381,7 +386,7 @@ if (RUN_PERMTEST) {
   
   # Permutation null distribution plot
   hist(perm_r2,
-       main = paste("Permutation Test -", TARGET_VAR),
+       main = paste("Permutation Test -", AXIS_LABEL),
        xlab = "Permuted R²",
        breaks = 30,
        col = "lightgrey")
@@ -394,11 +399,27 @@ if (RUN_PERMTEST) {
 
 # ---- PLOTS ----
 
+# Site color palette (matched to reference plot)
+site_colors <- c(
+  "CC" = "#FA8072",   # light red/salmon-pink
+  "CE" = "#F28500",   # light orange
+  "FP" = "#4DAC26",   # light green
+  "GI" = "#1B9E77",   # teal
+  "HI" = "#7EA6E0",   # light indigo
+  "RI" = "#F18AE6"    # light purple
+)
+
 # Observed vs predicted
-p_obs <- ggplot(cv_preds, aes(x = obs, y = pred)) +
+# Attach site to cv_preds using row indices (repeated CV replicates rows, so we match by rowIndex)
+cv_preds$Site <- site_labels[cv_preds$rowIndex]
+
+p_obs <- ggplot(cv_preds, aes(x = obs, y = pred, color = Site)) +
   geom_abline(slope = 1, intercept = 0,
               color = "red", linetype = "dashed", linewidth = 0.9) +
-  geom_point(size = 2.5, alpha = 0.8, shape = 21, fill = NA, color = "black") +
+  geom_jitter(size = 2.5, alpha = 0.8, shape = 21, fill = NA, stroke = 0.8,
+              width = diff(range(cv_preds$obs)) * 0.01,
+              height = diff(range(cv_preds$pred)) * 0.01) +
+  scale_color_manual(values = site_colors, name = "Site") +
   annotate("text",
            x     = min(cv_preds$obs),
            y     = max(cv_preds$pred),
@@ -406,9 +427,9 @@ p_obs <- ggplot(cv_preds, aes(x = obs, y = pred)) +
                           "\nRMSEP = ", round(rmsep_cv, 3),
                           "\nRPD = ", round(rpd_cv, 3)),
            hjust = 0, vjust = 1, size = 3.8) +
-  labs(title = paste(TARGET_VAR, "- Observed vs Predicted (Repeated k-fold CV)"),
-       x = paste("Observed", TARGET_VAR),
-       y = paste("Predicted", TARGET_VAR)) +
+  labs(title = paste0(TITLE_LABEL, "\nObserved vs Predicted (Repeated k-fold CV)"),
+       x = paste("Observed", AXIS_LABEL),
+       y = paste("Predicted", AXIS_LABEL)) +
   theme_bw(base_size = 14)
 print(p_obs)
 
@@ -419,7 +440,7 @@ p_vip <- ggplot(vip_df, aes(x = Wavelength, y = VIP)) +
   geom_line(linewidth = 0.8) +
   geom_hline(yintercept = 1, color = "red",
              linetype = "dashed", linewidth = 0.9) +
-  labs(title = paste("VIP Scores -", TARGET_VAR),
+  labs(title = paste("VIP Scores -", TITLE_LABEL),
        x = "Wavelength (nm)",
        y = "VIP Score") +
   theme_bw(base_size = 14)
@@ -438,7 +459,7 @@ if (RUN_PERMTEST) {
              y     = Inf,
              label = paste0("Observed R² = ", round(r2_cv, 3)),
              hjust = 1.2, vjust = 4, size = 3.8, color = "red") +
-    labs(title = paste("Permutation Test -", TARGET_VAR),
+    labs(title = paste("Permutation Test -", TITLE_LABEL),
          x = "Permuted R²",
          y = "Frequency") +
     theme_bw(base_size = 14)

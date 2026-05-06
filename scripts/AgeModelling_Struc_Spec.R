@@ -715,7 +715,8 @@ pred_df_obs <- data.frame(
   lower     = as.numeric(pred_ci[, "lower"]),
   upper     = as.numeric(pred_ci[, "higher"]),
   EGFR      = struc_spec$EGFR_5nm_Median,
-  zq95      = struc_spec$zq95
+  zq95      = struc_spec$zq95,
+  Site      = struc_spec$Site
 )
 
 # Pull R1 and pinball for annotation
@@ -726,7 +727,8 @@ best_pinball <- round(pinball_vals[best_model_name], 3)
 p_obs <- ggplot(pred_df_obs, aes(x = observed, y = predicted)) +
   geom_errorbar(aes(ymin = lower, ymax = upper),
                 alpha = 0.25, color = "grey50", width = 0) +
-  geom_point(size = 2.5, alpha = 0.8) +
+  geom_point(aes(color = Site), size = 2.5, alpha = 0.8) +
+  scale_color_discrete(name = "Site") +
   #geom_point(aes(color = EGFR), size = 2.5, alpha = 0.8) +
   geom_abline(slope = 1, intercept = 0,
               color = "red", linetype = "dashed", linewidth = 0.9) +
