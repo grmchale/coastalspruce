@@ -64,15 +64,7 @@ if (nrow(np_experiment) > 1) {
 }
 
 ####################### ADD VEGETATION INDICES TO NP SPECTRA JOINED ####################
-## Activate hsdar if available (optional Boochs)
-hsdar_ok <- requireNamespace("hsdar", quietly = TRUE)
-if (hsdar_ok) {
-  library(hsdar)  # will attach; skip if not installed
-} else {
-  message("Package 'hsdar' not installed; Boochs will be set to NA.")
-}
-
-stopifnot(exists("np_spectra_joined"))
+#Use np_spectra_joined here
 
 # 1) Identify wavelength columns and order numerically
 is_wl_col      <- function(nm) startsWith(nm, "nm_")
@@ -87,7 +79,7 @@ wl     <- wl_all[o]                        # numeric wavelengths (integers in yo
 X      <- as.matrix(np_spectra_joined[, wl_cols[o], drop = FALSE])  # spectra matrix
 
 # 2) Ensure required exact bands exist (integer wavelengths)
-need <- c(531, 570, 550, 670, 680, 700, 704, 709, 720, 754, 800)
+need <- c(531, 570, 550, 670, 680, 700, 703, 704, 705, 709, 720, 753, 754, 755, 800)
 need_names <- paste0("nm_", need)
 have_names <- names(np_spectra_joined)[wl_cols[o]]
 missing <- setdiff(need_names, have_names)
@@ -108,71 +100,88 @@ R709 <- X[, col_ix(709)]
 R720 <- X[, col_ix(720)]
 R754 <- X[, col_ix(754)]
 R800 <- X[, col_ix(800)]
+R703 <- X[, col_ix(703)]
+R705 <- X[, col_ix(705)]
+R753 <- X[, col_ix(753)]
+R755 <- X[, col_ix(755)]
 eps  <- .Machine$double.eps
 
 # 3) Compute indices (vectorized)
 PRI   <- (R531 - R570) / pmax(R531 + R570, eps)
 NDVI  <- (R800 - R680) / pmax(R800 + R680, eps)
+GNDVI  <- (R800 - R550) / pmax(R800 + R550, eps)
 NDRE  <- (R800 - R720) / pmax(R800 + R720, eps)
 
 TCARI <- 3 * ((R700 - R670) - 0.2 * (R700 - R550) * (R700 / pmax(R670, eps)))
 OSAVI <- (1 + 0.16) * (R800 - R670) / pmax(R800 + R670 + 0.16, eps)
 TCARIOSAVI <- TCARI / pmax(OSAVI, eps)
 
-Datt3 <- (R754 - R704) / pmax(R754 + R704, eps)
+D1_754 <- (R755 - R753) / 2
+D1_704 <- (R705 - R703) / 2
+Datt3  <- D1_754 / pmax(D1_704, eps)
 
-# Practical CARI variant (baseline in 550–700 region)
-CARI <- abs((R700 - R670 - 0.2 * (R700 - R550)) * (R670 / pmax(R700, eps)))
-
-# 4) Boochs via hsdar (optional)
-Boochs <- rep(NA_real_, nrow(X))
-if (hsdar_ok) {
-  # Build speclib once (rows = samples, columns = wavelengths)
-  colnames(X) <- paste0("nm_", wl)  # ensure names align with wl vector
-  sl <- hsdar::speclib(X, wavelength = wl)
-  # Try Boochs, then Boochs2, then Boochs1
-  for (idx_name in c("Boochs", "Boochs2", "Boochs1")) {
-    res <- try(hsdar::vegindex(sl, index = idx_name), silent = TRUE)
-    if (!inherits(res, "try-error")) {
-      # robust numeric extraction
-      if (isS4(res) && "vi" %in% slotNames(res)) {
-        Boochs <- as.numeric(slot(res, "vi"))
-      } else if (is.data.frame(res) || is.matrix(res)) {
-        Boochs <- as.numeric(res[, 1])
-      } else {
-        Boochs <- as.numeric(res)
-      }
-      break
-    }
-  }
-}
-
-# 5) Bind back to np_spectra_joined (clean names, no suffixes)
+# 4) Bind back to np_spectra_joined (clean names, no suffixes)
 vi_df <- data.frame(
-  PRI = PRI,
-  NDVI = NDVI,
-  NDRE = NDRE,
+  PRI        = PRI,
+  NDVI       = NDVI,
+  NDRE       = NDRE,
   TCARIOSAVI = TCARIOSAVI,
-  Datt3 = Datt3,
-  CARI = CARI,
-  Boochs = Boochs,
+  Datt3      = Datt3,
+  GNDVI      = GNDVI,
   check.names = FALSE
 )
 
 np_spectra_joined <- cbind(np_spectra_joined, vi_df)
 
 # Define output path
-outfile <- "./data/branch_experiment/np_spectra_VIs.csv"
+outfile <- "./data/branch_experiment/np_spectra_VIs_manu.csv"
 
 # Write CSV with row names preserved
 write.csv(np_spectra_joined,
           file = outfile,
           row.names = TRUE)
 
+################# CALCULATE MEDIAN SPECTRA/INDICES PER NP AND ROUND (AGGREGATE) ############
+# Read back in np_spectra_joined (if needed)
+# Define input path
+infile <- "./data/branch_experiment/np_spectra_VIs_manu.csv"
+
+# Read CSV back into R, keeping row names
+np_spectra_joined <- read.csv(infile,
+                              row.names = 1,
+                              check.names = FALSE,
+                              stringsAsFactors = FALSE)
+
+library(dplyr)
+
+# Columns to take first value from (non-spectral metadata)
+meta_cols <- c("Tree", "Round", "Date", "Time", "Military_Time",
+               "Temp_C", "RH", "Fresh_mass", "Dry_mass", "WC", "Lights", "Notes")
+
+# Columns to take median of (spectral + VIs)
+spectral_cols <- c(grep("^nm_", names(np_spectra_joined), value = TRUE),
+                   c("PRI", "NDVI", "NDRE", "TCARIOSAVI", "Datt3", "GNDVI"))
+
+# Aggregate
+np_spectra_agg <- np_spectra_joined %>%
+  group_by(KeyField) %>%
+  summarise(
+    across(all_of(meta_cols), first),
+    across(all_of(spectral_cols), median, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Export
+write.csv(np_spectra_agg,
+          file = "./data/branch_experiment/np_spectra_agg.csv",
+          row.names = FALSE)
+
+cat("Aggregated dataframe dimensions:", nrow(np_spectra_agg), "rows x", ncol(np_spectra_agg), "cols\n")
+
 ####################### INDEX vs WC IN NP (ALL SAMPLES) ###########################
 # Read back in np_spectra_joined (if needed)
 # Define input path
-infile <- "./data/branch_experiment/np_spectra_VIs.csv"
+infile <- "./data/branch_experiment/np_spectra_VIs_manu.csv"
 
 # Read CSV back into R, keeping row names
 np_spectra_joined <- read.csv(infile,
