@@ -176,7 +176,7 @@ cat(sprintf("OOB  MAE (mean ± sd): %.2f ± %.2f\n", mean(oob_mae),  sd(oob_mae)
 cat(sprintf("OOB   R² (mean ± sd): %.3f ± %.3f\n\n", mean(oob_r2),  sd(oob_r2)))
 
 # Write top predictors to disk
-write.csv(rf_age_summary, "./R_outputs/modelling/rf/age_prediction_rf/age_strongestpredictors.csv")
+#write.csv(rf_BAI_summary, "./R_outputs/modelling/rf/age_prediction_rf/BAI2024_strongestpredictors.csv")
 
 ####### CREATE CORRELATION MATRIX  - BAI VS. SPECTRAL PREDICTORS #########
 
@@ -236,40 +236,35 @@ write.csv(cor_combined, file.path(out_dir, "BAI2024_spearpears_corr.csv"))
 
 # REPLE_5nm_Median is best across Spearman + Pearson correlations
 
-##### Consensus ranking across Spearman, Pearson, and RF #####
+##### Rank indicies (5nm) and structural predictors by absolute value of Spearman and Pearson correlations #####
+# Use this for selecting predictors in the model
 
-# 1. Rank by absolute correlation value (rank 1 = strongest)
-spearman_ranked <- cor_spearman_df %>%
-  mutate(Spearman_Rank = rank(-abs(Spearman_r))) %>%
-  select(Variable, Spearman_r, Spearman_Rank)
+ranking_df <- cor_combined %>%
+  filter(
+    grepl("5nm_Median$", Variable) |   # 5nm spectral indices
+      grepl("^p", Variable) |             # starts with lowercase p
+      grepl("^z", Variable) |             # starts with lowercase z
+      Variable %in% c("age", "rugosity", "DBH", "Area_m2")  # exact matches
+  ) %>%
+  mutate(
+    Spearman_abs = abs(Spearman_r),
+    Pearson_abs  = abs(Pearson_r),
+    Rank_Spearman = rank(-Spearman_abs, ties.method = "min"),
+    Rank_Pearson  = rank(-Pearson_abs,  ties.method = "min"),
+    Rank_Combined = Rank_Spearman + Rank_Pearson
+  ) %>%
+  arrange(Rank_Combined) %>%
+  select(Variable, Spearman_r, Pearson_r, Rank_Spearman, Rank_Pearson, Rank_Combined)
 
-pearson_ranked <- cor_pearson_df %>%
-  mutate(Pearson_Rank = rank(-abs(Pearson_r))) %>%
-  select(Variable, Pearson_r, Pearson_Rank)
-
-# 2. Prep RF df to match naming
-rf_ranked <- rf_BAI_summary %>%
-  rename(Variable = Predictor) %>%
-  select(Variable, RF_Rank)
-
-# 3. Join all three
-consensus_df <- spearman_ranked %>%
-  left_join(pearson_ranked, by = "Variable") %>%
-  left_join(rf_ranked,     by = "Variable") %>%
-  # 4. Average rank across all three (lower = better)
-  mutate(Mean_Rank = rowMeans(cbind(Spearman_Rank, Pearson_Rank, RF_Rank),
-                              na.rm = TRUE)) %>%
-  arrange(Mean_Rank)
-
-print(consensus_df)
-
-write.csv(consensus_df, file.path(out_dir, "BAI2024_consensus_ranking.csv"), row.names = FALSE)
-
+head(ranking_df, 20)
+write.csv(ranking_df, file = "outputs/BAI2024_corr_ranking.csv", row.names = FALSE)
+# Ranking IDs REPLE, PRI, PRInorm, and Maccioni as top spectral variables
+# Ranking IDs zpcum8, zpcum9, Area_m2 as top structural variables (age removed as it does not have complete data)
 
 ######## LME MODELS FOR BAI 2024, TESTS MULTIPLE ##########
 
 ### Create model list ####
-# a priori selection based on correlations and random forest above
+# a priori selection based on correlations
 library(lme4)
 library(MuMIn)
 
