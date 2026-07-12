@@ -171,6 +171,10 @@ np_spectra_agg <- np_spectra_joined %>%
     .groups = "drop"
   )
 
+# Remove trees 6 and 7 (needles not from canopy red spruce branches)
+np_spectra_agg <- np_spectra_agg %>%
+  filter(!Tree %in% c(6, 7))
+
 # Export
 write.csv(np_spectra_agg,
           file = "./data/branch_experiment/np_spectra_agg.csv",
@@ -178,7 +182,7 @@ write.csv(np_spectra_agg,
 
 cat("Aggregated dataframe dimensions:", nrow(np_spectra_agg), "rows x", ncol(np_spectra_agg), "cols\n")
 
-####################### INDEX vs WC IN NP (ALL SAMPLES) ###########################
+####################### PLOTTING INDEX vs WC IN NP (ALL SAMPLES) ###########################
 # Read back in np_spectra_joined (if needed)
 # Define input path
 infile <- "./data/branch_experiment/np_spectra_VIs_manu.csv"
@@ -190,7 +194,7 @@ np_spectra_joined <- read.csv(infile,
                               stringsAsFactors = FALSE)
 
 # USER SETTINGS 
-INDEX        <- "CARI"          # "PRI","NDVI","NDRE","TCARIOSAVI","Datt3","CARI","Boochs"
+INDEX        <- "PRI"          # "PRI","NDVI","NDRE","TCARIOSAVI","Datt3","CARI","Boochs"
 X_AXIS       <- "WC"           # "WC" or "INDEX"  (the other will be Y)
 STAT         <- "MEDIAN"       # "MEDIAN" or "MEAN" for within Tree×Round aggregation
 SHOW_FIT     <- FALSE           # draw a single overall linear fit?
@@ -287,16 +291,18 @@ library(lme4)
 library(car)
 
 # Feed results from above OR if necessary read back in:
-#agg <- read.csv(./data/branch_experiment/np_agg_medians.csv",
-                #check.names = FALSE,
-                #stringsAsFactors = FALSE)
+agg <- read.csv("./data/branch_experiment/np_spectra_agg.csv",
+                check.names = FALSE,
+                stringsAsFactors = FALSE)
+
+#Index <- "PRI"
 
 # Normality tests: QQ and Shapiro-Wilk
 par(mfrow = c(1, 2))  # 1 row, 2 columns
 
 # Index
-qqnorm(agg$Index, main = "QQ Plot of Index")
-qqline(agg$Index, col = "red", lwd = 2)
+qqnorm(agg$PRI, main = "QQ Plot of Index")
+qqline(agg$PRI, col = "red", lwd = 2)
 
 # WC
 qqnorm(agg$WC, main = "QQ Plot of WC")
@@ -305,17 +311,17 @@ qqline(agg$WC, col = "red", lwd = 2)
 par(mfrow = c(1, 1))  # reset layout
 
 # Shapiro-Wilk tests for normality
-shapiro_Index <- shapiro.test(agg$Index)
+shapiro_PRI <- shapiro.test(agg$PRI)
 shapiro_WC  <- shapiro.test(agg$WC)
 
-shapiro_Index
+shapiro_PRI
 shapiro_WC
 
 # Fit a linear mixed-effects model:
 #   Response: Index - PRI, NDVI, TCARI/OSAVI, etc.
 #   Fixed effect: WC (common slope across trees)
 #   Random effect: random intercept for each TreeNum (tree-specific baseline Index)
-agg_model = lmer(Index~WC+(1|TreeNum),data=agg)
+agg_model = lmer(Index~WC+(1|Tree),data=agg)
 summary(agg_model)
 anova(agg_model)
 Anova(agg_model) # car version of the anova
