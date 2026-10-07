@@ -193,6 +193,315 @@ np_spectra_agg <- read.csv(infile,
                               check.names = FALSE,
                               stringsAsFactors = FALSE)
 
+library(pls)
+library(ggplot2)
+
+# ---- SETTINGS ----
+SPEC_MIN   <- 398      # lower wavelength bound (nm). 398 / 1000 = drone-equivalent run
+SPEC_MAX   <- 1000     # upper wavelength bound (nm). 350 / 2500 = full spectrometer run
+NCOMP_MAX  <- 5        # max components (n = 30 samples)
+SCALE      <- FALSE    # TRUE = unit-variance scaling of each wavelength; FALSE = mean-centering only
+PREPROCESS <- "none"   # "none", "snv" (standard normal variate), or "d1" (first derivative)
+RUN_PERMTEST <- FALSE  # TRUE to run the (within-pile) permutation test
+N_PERMS    <- 999      # permutations (999 is a good start; 10,000 for publication)
+SEED       <- 42
+
+AXIS_LABEL  <- "WC"
+TITLE_LABEL <- "Needle Water Content"
+
+OUT_DIR <- "outputs"
+dir.create(OUT_DIR, showWarnings = FALSE)
+run_tag <- paste0(SPEC_MIN, "-", SPEC_MAX, "_", PREPROCESS, "_",
+                  ifelse(SCALE, "scaled", "centered"))
+
+# ---- DATA PREP ----
+spec_cols_all <- grep("^nm_[0-9]+$", names(np_spectra_agg), value = TRUE)
+wl_all <- as.numeric(sub("nm_", "", spec_cols_all))
+keep   <- wl_all >= SPEC_MIN & wl_all <= SPEC_MAX
+if (sum(keep) < 10) stop("Fewer than 10 wavelengths fall inside SPEC_MIN-SPEC_MAX.")
+ord       <- order(wl_all[keep])
+spec_cols <- spec_cols_all[keep][ord]
+wl        <- wl_all[keep][ord]
+
+needed <- c(spec_cols, "WC", "Tree", "Round")
+dat <- np_spectra_agg[complete.cases(np_spectra_agg[, needed]), ]
+
+X_raw <- as.matrix(dat[, spec_cols])
+y     <- dat$WC
+g     <- factor(dat$Tree)
+rnd   <- factor(dat$Round, levels = sort(unique(dat$Round)))
+
+# Preprocessing is applied spectrum-by-spectrum (row-wise), so it cannot leak
+# information between training and test samples.
+preprocess_spectra <- function(X, wl, method) {
+  if (method == "snv") {
+    X <- t(apply(X, 1, function(r) (r - mean(r)) / sd(r)))
+  } else if (method == "d1") {
+    dw <- diff(wl)
+    X  <- sweep(t(apply(X, 1, diff)), 2, dw, "/")  # n x (p-1) slope per nm
+    wl <- wl[-1] - dw / 2                        # midpoint wavelengths
+  } else if (method != "none") {
+    stop("PREPROCESS must be 'none', 'snv', or 'd1'")
+  }
+  colnames(X) <- wl
+  list(X = X, wl = wl)
+}
+pp    <- preprocess_spectra(X_raw, wl, PREPROCESS)
+X_mat <- pp$X
+wl    <- pp$wl
+
+cat("Modelling WC | range:", min(wl), "-", max(wl), "nm |",
+    ncol(X_mat), "predictors | preprocess:", PREPROCESS,
+    "| scaled:", SCALE, "\n")
+cat("n =", length(y), "samples in", nlevels(g), "piles\n")
+print(table(Pile = g, Round = rnd))
+
+# ---- HELPER FUNCTIONS ----
+make_df <- function(X, y = NULL) {
+  d <- data.frame(row = seq_len(nrow(X)))
+  if (!is.null(y)) d$y <- y
+  d$X <- X
+  d
+}
+
+fit_pls <- function(X, y, ncomp) {
+  plsr(y ~ X, ncomp = ncomp, data = make_df(X, y),
+       scale = SCALE, validation = "none")
+}
+
+# Predictions for several component numbers at once -> n x length(ncomps) matrix
+predict_pls <- function(model, Xnew, ncomps) {
+  p <- predict(model, ncomp = ncomps, newdata = make_df(Xnew))
+  matrix(p, nrow = nrow(Xnew), ncol = length(ncomps))
+}
+
+rmsep_by_comp <- function(pred, obs) sqrt(colMeans((pred - obs)^2))
+
+# Leave-one-pile-out CV. Returns out-of-fold predictions for 1..K components
+# plus a baseline (training-fold mean) used for Q2.
+lopo_cv <- function(X, y, g, K) {
+  g    <- droplevels(g)
+  pred <- matrix(NA_real_, length(y), K)
+  base <- rep(NA_real_, length(y))
+  for (lv in levels(g)) {
+    te <- g == lv
+    tr <- !te
+    m  <- fit_pls(X[tr, , drop = FALSE], y[tr], K)
+    pred[te, ] <- predict_pls(m, X[te, , drop = FALSE], 1:K)
+    base[te]   <- mean(y[tr])
+  }
+  list(pred = pred, base = base)
+}
+
+# Nested CV: for each held-out pile, choose ncomp by leave-one-pile-out within
+# the remaining piles, refit, then predict the held-out pile.
+nested_lopo <- function(X, y, g, K) {
+  g    <- droplevels(g)
+  pred <- rep(NA_real_, length(y))
+  base <- rep(NA_real_, length(y))
+  k_chosen <- setNames(rep(NA_integer_, nlevels(g)), levels(g))
+  for (lv in levels(g)) {
+    te <- g == lv
+    tr <- !te
+    inner  <- lopo_cv(X[tr, , drop = FALSE], y[tr], g[tr], K)
+    k_best <- which.min(rmsep_by_comp(inner$pred, y[tr]))
+    m <- fit_pls(X[tr, , drop = FALSE], y[tr], k_best)
+    pred[te] <- predict_pls(m, X[te, , drop = FALSE], k_best)[, 1]
+    base[te] <- mean(y[tr])
+    k_chosen[lv] <- k_best
+  }
+  list(pred = pred, base = base, k_chosen = k_chosen)
+}
+
+calc_metrics <- function(obs, pred, base) {
+  rmsep <- sqrt(mean((obs - pred)^2))
+  c(RMSEP = rmsep,
+    R2    = if (sd(pred) > 0 && sd(obs) > 0) cor(obs, pred)^2 else NA_real_,
+    Q2    = 1 - sum((obs - pred)^2) / sum((obs - base)^2),
+    Bias  = mean(pred - obs),
+    RPD   = sd(obs) / rmsep)
+}
+
+# VIP scores (works for any ncomp, including 1)
+vip_func <- function(model, ncomp) {
+  W  <- model$loading.weights[, 1:ncomp, drop = FALSE]
+  Q  <- as.vector(model$Yloadings)[1:ncomp]
+  T  <- model$scores[, 1:ncomp, drop = FALSE]
+  SS <- Q^2 * colSums(T^2)
+  W_norm <- sweep(W, 2, sqrt(colSums(W^2)), "/")
+  as.vector(sqrt(nrow(W) * (W_norm^2 %*% SS) / sum(SS)))
+}
+
+# ---- 1. LEAVE-ONE-PILE-OUT CV (component-number diagnostic) ----
+cv_simple  <- lopo_cv(X_mat, y, g, NCOMP_MAX)
+rmsep_curve <- rmsep_by_comp(cv_simple$pred, y)
+n_opt <- which.min(rmsep_curve)
+cat("\nRMSEP by number of components (leave-one-pile-out):\n")
+print(round(setNames(rmsep_curve, 1:NCOMP_MAX), 4))
+cat("Optimal ncomp (lowest RMSEP on all 30 samples):", n_opt, "\n")
+
+# ---- 2. NESTED CV (headline performance) ----
+# NOTE: choosing ncomp and reporting its error on the same CV is slightly
+# optimistic, so the headline metrics below come from nested CV.
+nested <- nested_lopo(X_mat, y, g, NCOMP_MAX)
+m_nested <- calc_metrics(y, nested$pred, nested$base)
+cat("\nComponents chosen in each outer fold:\n"); print(nested$k_chosen)
+cat("\n--- Nested leave-one-pile-out metrics (headline) ---\n")
+print(round(m_nested, 4))
+
+m_simple <- calc_metrics(y, cv_simple$pred[, n_opt], cv_simple$base)
+cat("\n--- Non-nested LOPO metrics at ncomp =", n_opt, "(diagnostic) ---\n")
+print(round(m_simple, 4))
+cat("(If R2 and Q2 differ a lot, the model has offset/slope errors.)\n")
+
+# Per-pile metrics (descriptive only: 4-7 points each)
+pile_metrics <- do.call(rbind, lapply(levels(g), function(lv) {
+  i <- g == lv
+  data.frame(Pile = lv, n = sum(i),
+             RMSEP = sqrt(mean((y[i] - nested$pred[i])^2)),
+             R2 = if (sd(nested$pred[i]) > 0) cor(y[i], nested$pred[i])^2 else NA,
+             Bias = mean(nested$pred[i] - y[i]))
+}))
+cat("\n--- Per-pile metrics (nested predictions; descriptive) ---\n")
+print(pile_metrics, digits = 3, row.names = FALSE)
+
+# ---- 3. FINAL MODEL ON ALL DATA + VIP ----
+pls_final  <- fit_pls(X_mat, y, n_opt)
+vip_scores <- vip_func(pls_final, n_opt)
+stopifnot(length(vip_scores) == length(wl))
+vip_df <- data.frame(Wavelength = wl, VIP = vip_scores)
+
+# ---- 4. OPTIONAL PERMUTATION TEST (within-pile, full nested procedure) ----
+p_val <- NA
+if (RUN_PERMTEST) {
+  cat("\nRunning permutation test (", N_PERMS, "permutations)...\n")
+  set.seed(SEED)
+  permute_within <- function(y, g) {
+    yp <- y
+    for (lv in levels(g)) {
+      i <- which(g == lv)
+      yp[i] <- y[i[sample.int(length(i))]]
+    }
+    yp
+  }
+  perm_q2 <- numeric(N_PERMS)
+  pb <- txtProgressBar(min = 0, max = N_PERMS, style = 3)
+  for (i in seq_len(N_PERMS)) {
+    yp <- permute_within(y, g)
+    nn <- nested_lopo(X_mat, yp, g, NCOMP_MAX)
+    perm_q2[i] <- calc_metrics(yp, nn$pred, nn$base)["Q2"]
+    setTxtProgressBar(pb, i)
+  }
+  close(pb)
+  p_val <- (1 + sum(perm_q2 >= m_nested["Q2"])) / (N_PERMS + 1)
+  cat("\nPermutation p-value (statistic = nested Q2):", p_val, "\n")
+}
+
+# ---- 5. PLOTS ----
+plot_df <- data.frame(Observed = y, Predicted = nested$pred,
+                      Residual = nested$pred - y, Pile = g, Round = rnd)
+shape_vals <- rep_len(c(16, 17, 15, 18, 3, 4, 8), nlevels(rnd))
+lims <- range(c(plot_df$Observed, plot_df$Predicted))
+
+p_obs <- ggplot(plot_df, aes(Observed, Predicted, color = Pile)) +
+  geom_abline(slope = 1, intercept = 0, color = "red",
+              linetype = "dashed", linewidth = 0.9) +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Dark2") +
+  coord_equal(xlim = lims, ylim = lims) +
+  annotate("text", x = -Inf, y = Inf, hjust = -0.1, vjust = 1.2, size = 3.8,
+           label = paste0("Q² = ", round(m_nested["Q2"], 3),
+                          "\nR² = ", round(m_nested["R2"], 3),
+                          "\nRMSEP = ", round(m_nested["RMSEP"], 3),
+                          "\nRPD = ", round(m_nested["RPD"], 3))) +
+  labs(title = paste0(TITLE_LABEL, " (", SPEC_MIN, "-", SPEC_MAX, " nm)",
+                      "\nObserved vs Predicted (nested leave-one-pile-out CV)"),
+       x = paste("Observed", AXIS_LABEL), y = paste("Predicted", AXIS_LABEL)) +
+  theme_bw(base_size = 14)
+print(p_obs)
+
+p_resid <- ggplot(plot_df, aes(Observed, Residual, color = Pile,)) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  geom_point(size = 3, alpha = 0.85) +
+  scale_color_brewer(palette = "Dark2") +
+  scale_shape_manual(values = shape_vals) +
+  labs(title = paste("Residuals (predicted - observed) -", TITLE_LABEL),
+       x = paste("Observed", AXIS_LABEL), y = "Residual") +
+  theme_bw(base_size = 14)
+print(p_resid)
+
+p_rmsep <- ggplot(data.frame(Components = 1:NCOMP_MAX, RMSEP = rmsep_curve),
+                  aes(Components, RMSEP)) +
+  geom_line(linewidth = 0.8) + geom_point(size = 3) +
+  geom_point(data = data.frame(Components = n_opt, RMSEP = rmsep_curve[n_opt]),
+             color = "red", size = 4, shape = 1, stroke = 1.5) +
+  labs(title = paste("RMSEP vs Components (leave-one-pile-out) -", TITLE_LABEL),
+       x = "Number of components", y = "RMSEP") +
+  theme_bw(base_size = 14)
+print(p_rmsep)
+
+p_vip <- ggplot(vip_df, aes(Wavelength, VIP)) +
+  geom_line(linewidth = 0.6) +
+  geom_hline(yintercept = 1, color = "red", linetype = "dashed", linewidth = 0.9) +
+  labs(title = paste("VIP Scores -", TITLE_LABEL,
+                     paste0("(", n_opt, " components)")),
+       x = ifelse(PREPROCESS == "d1", "Wavelength (nm, midpoints)", "Wavelength (nm)"),
+       y = "VIP Score") +
+  theme_bw(base_size = 14)
+print(p_vip)
+
+if (RUN_PERMTEST) {
+  p_perm <- ggplot(data.frame(perm_q2 = perm_q2), aes(perm_q2)) +
+    geom_histogram(bins = 30, fill = "lightgrey", color = "white") +
+    geom_vline(xintercept = m_nested["Q2"], color = "red", linewidth = 0.9) +
+    annotate("text", x = m_nested["Q2"], y = Inf, hjust = 1.1, vjust = 2,
+             size = 3.8, color = "red",
+             label = paste0("Observed Q² = ", round(m_nested["Q2"], 3),
+                            "\np = ", signif(p_val, 3))) +
+    labs(title = paste("Within-pile Permutation Test -", TITLE_LABEL),
+         x = "Permuted nested Q²", y = "Frequency") +
+    theme_bw(base_size = 14)
+  print(p_perm)
+}
+
+# ---- 6. RESULTS TABLE ----
+results_row <- data.frame(
+  Range_nm        = paste0(SPEC_MIN, "-", SPEC_MAX),
+  Preprocess      = PREPROCESS,
+  Scaled          = SCALE,
+  n_predictors    = length(wl),
+  n_samples       = length(y),
+  nComp_optimal   = n_opt,
+  nComp_nested_median = median(nested$k_chosen),
+  RMSEP_nested    = m_nested["RMSEP"],
+  R2_nested       = m_nested["R2"],
+  Q2_nested       = m_nested["Q2"],
+  Bias_nested     = m_nested["Bias"],
+  RPD_nested      = m_nested["RPD"],
+  RMSEP_LOPO      = m_simple["RMSEP"],
+  Q2_LOPO         = m_simple["Q2"],
+  Perm_p          = p_val,
+  row.names = NULL
+)
+print(results_row)
+
+# ---- 7. EXPORT ----
+f <- function(stem, ext) file.path(OUT_DIR, paste0("np_PLSR_", stem, "_", run_tag, ".", ext))
+
+write.csv(results_row, f("results", "csv"), row.names = FALSE)
+write.csv(pile_metrics, f("pile_metrics", "csv"), row.names = FALSE)
+write.csv(data.frame(Pile = g, Round = rnd, Observed = y,
+                     Predicted_nested = nested$pred),
+          f("obs_vs_pred", "csv"), row.names = FALSE)
+write.csv(data.frame(Components = 1:NCOMP_MAX, RMSEP = rmsep_curve),
+          f("RMSEP_by_comp", "csv"), row.names = FALSE)
+write.csv(vip_df, f("VIP", "csv"), row.names = FALSE)
+
+ggsave(f("obs_vs_pred", "png"), p_obs,   width = 7,  height = 7, dpi = 300)
+ggsave(f("residuals", "png"),   p_resid, width = 7,  height = 5, dpi = 300)
+ggsave(f("RMSEP_by_comp", "png"), p_rmsep, width = 6, height = 5, dpi = 300)
+ggsave(f("VIP", "png"),         p_vip,   width = 10, height = 5, dpi = 300)
+if (RUN_PERMTEST) ggsave(f("permtest", "png"), p_perm, width = 7, height = 6, dpi = 300)
 
 
 ####################### PLOTTING INDEX vs WC IN NP (ALL SAMPLES) ###########################
