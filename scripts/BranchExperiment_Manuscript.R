@@ -486,7 +486,7 @@ results_row <- data.frame(
 print(results_row)
 
 # ---- 7. EXPORT ----
-f <- function(stem, ext) file.path(OUT_DIR, paste0("np_PLSR_", stem, "_", run_tag, ".", ext))
+f <- function(stem, ext) file.path(OUT_DIR, paste0("branchexp_PLSR_", stem, "_", run_tag, ".", ext))
 
 write.csv(results_row, f("results", "csv"), row.names = FALSE)
 write.csv(pile_metrics, f("pile_metrics", "csv"), row.names = FALSE)
