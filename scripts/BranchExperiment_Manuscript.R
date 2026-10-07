@@ -1,7 +1,7 @@
 #Set working directory to "coastalspruce" GitHub repo
 
 ################################################################################
-################### BRANCH/NEEDLE SPECTRAL ANALYSIS ############################
+################### NEEDLE SPECTRAL ANALYSIS ############################
 ################################################################################
 
 ######################### JOIN WC TO NP SPECTRA ##############################
@@ -181,6 +181,19 @@ write.csv(np_spectra_agg,
           row.names = FALSE)
 
 cat("Aggregated dataframe dimensions:", nrow(np_spectra_agg), "rows x", ncol(np_spectra_agg), "cols\n")
+
+######################## PLSR ANALYSIS FOR NP SPECTRA! ##############################
+# Read back in np_spectra_agg (if needed)
+# Define input path
+infile <- "./data/branch_experiment/np_spectra_agg.csv"
+
+# Read CSV back into R, keeping row names
+np_spectra_agg <- read.csv(infile,
+                              row.names = 1,
+                              check.names = FALSE,
+                              stringsAsFactors = FALSE)
+
+
 
 ####################### PLOTTING INDEX vs WC IN NP (ALL SAMPLES) ###########################
 # Read back in np_spectra_joined (if needed)
